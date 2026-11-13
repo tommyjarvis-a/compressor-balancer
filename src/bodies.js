@@ -24,7 +24,7 @@ export function buildBodies(passes, dens, defRho, fileName = '', probe = null) {
     if (vol.m < 0) vol = scale(vol, -1);
     const own = dens.find(x => x.product === m.name), d = own || file1;
     return { name: m.name || fileName, file: fileName, sign: /^REMOVE_/.test(m.name || '') ? -1 : 1, vol, unc, rho: d ? Math.round(d.density * 1000) / 1000 : defRho, src: own ? 'STEP' : d ? 'STEP (file)' : 'default',
-      material: d?.material ?? null, on: true, pos, idx, nrm: m.attributes.normal?.array, ...meshCheck(pos, idx, fine.m),
+      material: d?.material ?? null, on: true, pos, idx, nrm: m.attributes.normal?.array, faces: (m.brep_faces || []).flatMap(f => [f.first, f.last]), ...meshCheck(pos, idx, fine.m),
       color: m.color && (m.color[0] * 255 << 16 | m.color[1] * 255 << 8 | m.color[2] * 255) };
   });
 }
