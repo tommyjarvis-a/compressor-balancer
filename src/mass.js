@@ -69,7 +69,8 @@ export function eig3(A) {
 }
 
 // Mesh closure check: weld vertices by position, count edges not shared by exactly two triangles in opposite directions.
-export function openEdges(pos, idx, tol = 1e-6) {
+export const openEdges = (pos, idx, tol) => edgeStats(pos, idx, tol).bad;
+function edgeStats(pos, idx, tol = 1e-6) {
   let span = 0; for (const v of pos) span = Math.max(span, Math.abs(v));
   const q = 1 / Math.max(tol * (span || 1), 1e-12), id = new Map(), w = [];
   for (let i = 0; i < pos.length; i += 3) {
@@ -82,7 +83,24 @@ export function openEdges(pos, idx, tol = 1e-6) {
     const key = a < b ? a * N + b : b * N + a; e.set(key, (e.get(key) || 0) + (a < b ? 1 : -1) + 1000);
   }
   let bad = 0; for (const v of e.values()) if (v !== 2000) bad++;
-  return bad;
+  return { bad, edges: e.size };
+}
+// Does an imperfect mesh still give trustworthy mass properties? For a closed surface the vector area ΣA is 0
+// and the signed-tetrahedron volume does not depend on the origin; with gaps it changes by t·ΣA/3 when the origin
+// moves by t. eps = |ΣA|·(D/2)/(3|V|) is that relative volume ambiguity for a half-diagonal shift (the CoM ambiguity
+// is of the same order). Unreliable when eps > 1e-4 or more than 5 % of the edges are open/non-manifold; a few
+// bad edges with eps below the limit (T-junctions, duplicate seam nodes, slivers) only get a quiet note.
+export const CLOSURE = { eps: 1e-4, frac: 0.05 };
+export function meshCheck(pos, idx, V) {
+  const { bad, edges } = edgeStats(pos, idx), A = [0, 0, 0], lo = [1 / 0, 1 / 0, 1 / 0], hi = [-1 / 0, -1 / 0, -1 / 0];
+  for (let i = 0; i < pos.length; i++) { const k = i % 3; if (pos[i] < lo[k]) lo[k] = pos[i]; if (pos[i] > hi[k]) hi[k] = pos[i]; }
+  for (let t = 0; t < idx.length; t += 3) {
+    const a = 3 * idx[t], b = 3 * idx[t + 1], c = 3 * idx[t + 2];
+    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2], vx = pos[c] - pos[a], vy = pos[c + 1] - pos[a + 1], vz = pos[c + 2] - pos[a + 2];
+    A[0] += (uy * vz - uz * vy) / 2; A[1] += (uz * vx - ux * vz) / 2; A[2] += (ux * vy - uy * vx) / 2;
+  }
+  const D = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) || 0, eps = bad ? Math.hypot(...A) * D / 6 / Math.abs(V) : 0, frac = edges ? bad / edges : 0;
+  return { open: bad, frac, eps, unreliable: !(eps <= CLOSURE.eps) || frac > CLOSURE.frac };
 }
 
 // Tessellation error of a faceted curved surface scales ~θ² (θ = angular deflection), so two meshes at

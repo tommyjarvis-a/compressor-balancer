@@ -102,7 +102,7 @@ function update() {
 const srcText = b => `${b.sign < 0 ? 'removal (−m) · ' : ''}${b.src}${b.material ? ' · ' + esc(b.material) : ''} · V ${fmt(b.vol.m)} mm³${b.unc ? ` · ±${fmt(b.unc.dc * 1000, 2)} µm CoM` : ''}`;
 function renderBodies() {
   $('#bodies tbody').innerHTML = st.bodies.map((b, i) => `<tr><td><input type="checkbox" data-on="${i}" ${b.on ? 'checked' : ''}></td>
-    <td>${esc(b.name)}${b.open ? ` <span title="${b.open} open/non-manifold edges: mesh not closed, mass properties unreliable">⚠</span>` : ''}<div class="src" data-src="${i}">${srcText(b)}</div></td>
+    <td>${esc(b.name)}${b.unreliable ? ` <span class="bad" title="${b.open} open/non-manifold edges (${pct(b.frac)} of edges), volume closure error ${fmt(b.eps, 2)}: mesh not closed, mass properties unreliable">⚠</span>` : b.open ? ` <span class="note" title="${b.open} open/non-manifold edges (${pct(b.frac)} of edges) but the mesh closes (volume closure error ${fmt(b.eps, 2)} ≤ 1e-4): mass properties OK">ⓘ</span>` : ''}<div class="src" data-src="${i}">${srcText(b)}</div></td>
     <td><input type="number" step="any" data-rho="${i}" value="${b.rho}"></td><td data-mass="${i}">${fmt(bmass(b))}</td></tr>`).join('');
 }
 function renderAxis() {
@@ -122,6 +122,7 @@ function renderTools() {
     ${t.kind === 'prism' ? `<textarea data-k="pts" title="x,y; x,y; … (mm, local)">${t.pts.map(p => p.join(',')).join('; ')}</textarea>` : ''}
     <div class="src">mass ${valid(t) ? fmt(toolMoments(t).m) : '—'} g</div></div>`).join('');
 }
+const pct = f => (100 * f).toPrecision(2) + ' %';
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
 const defBounds = (k, v) => /^(a0|rx|ry|rz)$/.test(k) ? [-180, 180] : k === 'sweep' ? [5, 360] : [Math.max(/^(x|y|z)$/.test(k) ? -1e9 : 0, +(v - Math.max(Math.abs(v), 10)).toFixed(3)), +(v + Math.max(Math.abs(v), 10)).toFixed(3)];
 

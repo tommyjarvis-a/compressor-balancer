@@ -1,4 +1,4 @@
-import { meshMoments, richardson, derive, scale, openEdges } from './mass.js';
+import { meshMoments, richardson, derive, scale, meshCheck } from './mass.js';
 // Turn occt-import-js results (one per tessellation pass, finest last) into body records.
 // Density: a STEP record whose product name matches the body wins (src 'STEP'). A file-wide value is
 // used only when no record matches any body and the file holds a single distinct density
@@ -18,7 +18,7 @@ export function buildBodies(passes, dens, defRho, fileName = '') {
     if (vol.m < 0) vol = scale(vol, -1);
     const own = dens.find(x => x.product === m.name), d = own || one;
     return { name: m.name || fileName, file: fileName, sign: /^REMOVE_/.test(m.name || '') ? -1 : 1, vol, unc, rho: d ? Math.round(d.density * 1000) / 1000 : defRho, src: own ? 'STEP' : d ? 'STEP (file)' : 'default',
-      material: d?.material ?? null, on: true, pos, idx, nrm: m.attributes.normal?.array, open: openEdges(pos, idx),
+      material: d?.material ?? null, on: true, pos, idx, nrm: m.attributes.normal?.array, ...meshCheck(pos, idx, fine.m),
       color: m.color && (m.color[0] * 255 << 16 | m.color[1] * 255 << 8 | m.color[2] * 255) };
   });
 }
