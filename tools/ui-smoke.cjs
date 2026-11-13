@@ -1,4 +1,5 @@
-// Headed UI smoke: triad, body selection (list ⇄ view, drag ≠ click, Esc), typed axis, axis picking
+// Headed UI smoke: triad, model-space origin at 0,0,0, body selection (list ⇄ view, drag ≠ click, Esc, Ctrl-click multi-select),
+// Calculate CG (marker, no-selection message, stale on selection/density change, dashed line from origin), typed axis, axis picking
 // (cylinder, circular edge, 2 points), optimiser about a tilted axis, JSON/CSV export and session reload.
 // Uses test/fixtures/tilted-rotor.stp (shaft + ring rotor + lump on a tilted axis). Needs Playwright:
 //   python3 -m http.server 8765 &   HEADED=1 node tools/ui-smoke.cjs [url]
@@ -29,6 +30,8 @@ const TILT = { rx: 25, ry: -10, rz: 15 }, O = [5, -3, 8];
       await p.waitForFunction(() => / bodies ·/.test(document.querySelector('#status').textContent), null, { timeout: 60000 });
       const names = (await st()).names, iRotor = names.indexOf('rotor'), iShaft = names.indexOf('shaft');
       const view = await p.locator('#view canvas').boundingBox();
+      const origin = await p.evaluate(() => ({ has: rab.view.hasOrigin(), text: document.querySelector('#originmark')?.textContent, hidden: !!document.querySelector('#originmark')?.hidden, line: rab.view.hasOriginToCG() }));
+      check('model-space origin marker at 0,0,0 (label, not the inset triad)', origin.has && /Origin 0,0,0/.test(origin.text || '') && !origin.line, JSON.stringify(origin));
       // --- triad: red/green/blue pixels in the lower-left inset, follows the camera, survives resize
       const colours = async () => { const box = await p.locator('#view canvas').boundingBox(), px = await p.evaluate(() => rab.view.triadPx);
         const png = await p.screenshot({ clip: { x: box.x, y: box.y + box.height - px, width: px, height: px } });
@@ -58,6 +61,39 @@ const TILT = { rx: 25, ry: -10, rz: 15 }, O = [5, -3, 8];
       if (process.env.SHOT) await p.screenshot({ path: process.env.SHOT + '-select.png' });
       await p.keyboard.press('Escape'); check('Esc deselects', (await st()).sel === -1);
       await p.mouse.click(h.x, h.y); await p.mouse.click(view.x + view.width - 30, view.y + 30); check('click empty space deselects', (await st()).sel === -1);
+      // --- assembly CG: no selection, multi-select, marker, stale
+      await p.click('#calcg');
+      const cgNone = await p.textContent('#cgout');
+      check('Calculate CG with no selection shows a message', /No bodies selected/.test(cgNone) && !(await p.evaluate(() => rab.view.hasAssemblyCG())), cgNone);
+      await p.click(`#bodies tr[data-row="${iShaft}"] td:nth-child(2)`);
+      await p.click(`#bodies tr[data-row="${iRotor}"] td:nth-child(2)`, { modifiers: ['ControlOrMeta'] });
+      const sels = await p.evaluate(() => rab.st.sels.slice().sort((a, b) => a - b));
+      check('Ctrl-click adds a second body to the selection', sels.join() === [iRotor, iShaft].sort((a, b) => a - b).join(), `sels ${sels}`);
+      await p.click('#calcg');
+      const cg = await p.evaluate(() => ({ text: document.querySelector('#cgout').textContent, x: document.querySelector('#cgx')?.textContent, y: document.querySelector('#cgy')?.textContent, z: document.querySelector('#cgz')?.textContent, m: document.querySelector('#cgm')?.textContent, n: document.querySelector('#cgn')?.textContent, mark: !!document.querySelector('#cgmark') && !document.querySelector('#cgmark').hidden, has: rab.view.hasAssemblyCG(), stale: document.querySelector('#cgout').classList.contains('stale'), c: rab.st.cg && rab.st.cg.c, mass: rab.st.cg && rab.st.cg.m }));
+      const nums = [cg.x, cg.y, cg.z, cg.m].every(v => v && isFinite(Number(v)));
+      check('Calculate CG readout: X/Y/Z mm, mass g, body count, not stale', nums && cg.n === '2' && /Assembly CG/.test(cg.text) && /WCS origin/.test(cg.text) && !cg.stale, JSON.stringify({ x: cg.x, y: cg.y, z: cg.z, m: cg.m, n: cg.n, stale: cg.stale }));
+      check('assembly CG marker is visible (3-D + on-screen label)', cg.mark && cg.has, JSON.stringify({ mark: cg.mark, has: cg.has }));
+      const cgLine = await p.evaluate(() => ({ line: rab.view.hasOriginToCG(), origin: rab.view.hasOrigin(), originText: document.querySelector('#originmark')?.textContent }));
+      check('dashed line from origin to CG; origin marker still present', cgLine.line && cgLine.origin && /Origin 0,0,0/.test(cgLine.originText || ''), JSON.stringify(cgLine));
+      if (process.env.SHOT) await p.screenshot({ path: process.env.SHOT + '-cg.png' });
+      // change selection → stale; numbers kept
+      await p.click(`#bodies tr[data-row="${names.indexOf('lump')}"] td:nth-child(2)`);
+      const staleSel = await p.evaluate(() => ({ stale: document.querySelector('#cgout').classList.contains('stale'), tag: document.querySelector('#cgout .tag')?.textContent, x: document.querySelector('#cgx')?.textContent, label: document.querySelector('#cgmark')?.textContent }));
+      check('selection change marks the CG result stale (values kept)', staleSel.stale && staleSel.tag === 'stale' && staleSel.x === cg.x && /stale/.test(staleSel.label || ''), JSON.stringify(staleSel));
+      // recalculate, then change a density → stale
+      await p.click(`#bodies tr[data-row="${iShaft}"] td:nth-child(2)`);
+      await p.click(`#bodies tr[data-row="${iRotor}"] td:nth-child(2)`, { modifiers: ['ControlOrMeta'] });
+      await p.click('#calcg');
+      const prevRho = await p.inputValue(`#bodies input[data-rho="${iRotor}"]`);
+      await p.fill(`#bodies input[data-rho="${iRotor}"]`, '8000');
+      await p.dispatchEvent(`#bodies input[data-rho="${iRotor}"]`, 'input');
+      const staleRho = await p.evaluate(() => document.querySelector('#cgout').classList.contains('stale'));
+      check('density change marks the CG result stale', staleRho);
+      await p.fill(`#bodies input[data-rho="${iRotor}"]`, prevRho);
+      await p.dispatchEvent(`#bodies input[data-rho="${iRotor}"]`, 'input');
+      await p.click('#calcg');
+      await p.keyboard.press('Escape'); // deselect so later pick tests still see sel === -1
       // --- typed axis
       const typeAxis = async (o, d) => { for (const [k, v] of [['ox', o[0]], ['oy', o[1]], ['oz', o[2]], ['dx', d[0]], ['dy', d[1]], ['dz', d[2]]]) { await p.fill('#' + k, String(v)); await p.dispatchEvent('#' + k, 'change'); } };
       const fields = async ids => Object.fromEntries(await Promise.all(ids.map(async id => [id, await p.inputValue('#' + id)])));
@@ -105,10 +141,15 @@ const TILT = { rx: 25, ry: -10, rz: 15 }, O = [5, -3, 8];
       const j = JSON.parse(await dl('json')), csv = await dl('csv'), ax = j.axis;
       check('JSON axis point/direction/basis', ax.point.join() === s.axis.p.join() && ax.direction.join() === s.axis.d.join() && ax.basis.w.every((v, k) => Math.abs(v - s.axis.d[k]) < 1e-9) && Math.abs(dot(ax.basis.u, ax.basis.w)) < 1e-12, JSON.stringify(ax.basis.u));
       check('CSV axis + basis rows', /axis,direction \(world\),/.test(csv) && /basis,w \(world\),/.test(csv) && /basis,u \(world\),/.test(csv));
+      const cgJ = j.assemblyCG;
+      check('JSON includes assembly CG (c, mass, bodies)', !!(cgJ && Array.isArray(cgJ.c) && cgJ.c.length === 3 && typeof cgJ.mass === 'number' && Array.isArray(cgJ.bodies) && cgJ.bodies.length >= 1), JSON.stringify(cgJ));
+      check('CSV includes assembly CG rows', /assembly CG,X mm,/.test(csv) && /assembly CG,Y mm,/.test(csv) && /assembly CG,Z mm,/.test(csv) && /assembly CG,mass g,/.test(csv));
       const resid0 = await p.textContent('#resid'), jf = path.join(require('os').tmpdir(), 'rab-session.json'); fs.writeFileSync(jf, JSON.stringify(j));
       await p.reload(); await p.setInputFiles('#file', FIX); await p.waitForFunction(() => / bodies ·/.test(document.querySelector('#status').textContent), null, { timeout: 60000 });
       await p.setInputFiles('#file', jf); await p.waitForFunction(() => /Session loaded/.test(document.querySelector('#status').textContent), null, { timeout: 10000 }); s = await st();
       check('session reload restores axis + residuals', s.axis.p.join() === ax.point.join() && s.axis.d.join() === ax.direction.join() && (await p.textContent('#resid')) === resid0);
+      const cg2 = await p.evaluate(() => ({ c: rab.st.cg && rab.st.cg.c, mass: rab.st.cg && rab.st.cg.m, stale: document.querySelector('#cgout')?.classList.contains('stale'), text: document.querySelector('#cgout')?.textContent }));
+      check('session reload restores assembly CG', !!(cg2.c && cgJ && cg2.c.every((v, i) => v === cgJ.c[i]) && cg2.mass === cgJ.mass && /Assembly CG/.test(cg2.text || '') && !cg2.stale), JSON.stringify(cg2));
     } catch (e) { check('run', false, e.message); }
     check('no page errors', !errs.length, errs.join(' | '));
     console.log(`${name}:\n  ` + res.join('\n  '));

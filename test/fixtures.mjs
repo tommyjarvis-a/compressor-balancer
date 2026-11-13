@@ -20,7 +20,14 @@ export const FIX = {
   ],
   // rotor-unbalanced-like assembly on a tilted axis (through O along w = rotMat(TILT)·z), for axis picking
   'tilted-rotor': tilted([['shaft', 'cylinder', { r: 6, h: 100 }, -25], ['rotor', 'cylinder', { r: 30, ri: 6, h: 40 }, 0], ['lump', 'sector', { ri: 20, ro: 30, a0: 30, sweep: 40, h: 4 }, 40]]),
+  // Multi-body CG fixture: steel block, offset Al boss, and a REMOVE_slot cut from the block.
+  'cg-assembly': [
+    makeTool('prism', { name: 'block', pts: [[0, 0], [40, 0], [40, 20], [0, 20]], h: 10, rho: 7850 }),
+    makeTool('cylinder', { name: 'boss', r: 10, h: 20, x: 80, y: 10, rho: 2700 }),
+    makeTool('prism', { name: 'slot', pts: [[0, 0], [10, 0], [10, 10], [0, 10]], h: 10, x: 5, y: 5, rho: 7850, sign: -1 }),
+  ],
 };
+
 function tilted(parts) {
   const TILT = { rx: 25, ry: -10, rz: 15 }, O = [5, -3, 8], R = rotMat(TILT);
   return parts.map(([name, kind, o, z]) => makeTool(kind, { name, ...o, ...TILT, x: O[0] + z * R[2], y: O[1] + z * R[5], z: O[2] + z * R[8] }));

@@ -23,7 +23,7 @@ test('STEP export round-trips through occt-import-js (volume, CoM, inertia) and 
   for (const [k, ts] of Object.entries(FIX)) {
     const meshes = await readStep(fix(k)); assert.equal(meshes.length, ts.length, k + ' body count');
     ts.forEach((t, i) => {
-      const a = derive(vol(t)), m = meshes.find(x => x.name === t.name) || meshes[i], b = derive(m.vol);
+      const nm = (t.sign < 0 ? 'REMOVE_' : '') + t.name, a = derive(vol({ ...t, sign: 1 })), m = meshes.find(x => x.name === nm) || meshes[i], b = derive(m.vol);
       assert.equal(m.open, 0, `${k}/${t.name} closed`);
       assert.ok(rel(b.m, a.m) < 2e-4, `${k}/${t.name} V ${b.m} vs ${a.m}`);
       const L = Math.cbrt(a.m); a.c.forEach((v, j) => close(b.c[j], v, 2e-4 * L, `${k}/${t.name} c${j}`));

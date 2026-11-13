@@ -12,7 +12,7 @@ test('fixtures are valid B-reps with exact mass properties in OpenCascade (BRepG
     const out = execFileSync(py, [new URL('../tools/ocp-check.py', import.meta.url).pathname, new URL(`./fixtures/${k}.stp`, import.meta.url).pathname], { encoding: 'utf8' }).trim().split('\n').map(JSON.parse);
     assert.equal(out.length, ts.length, k);
     ts.forEach((t, i) => {
-      const a = derive(toolMoments({ ...t, rho: 1e6 })), o = out[i], tol = 1e-9 * Math.max(1, a.m);
+      const a = derive(toolMoments({ ...t, rho: 1e6, sign: 1 })), o = out[i], tol = 1e-9 * Math.max(1, a.m);
       assert.ok(o.valid, `${k}/${t.name} BRepCheck`);
       assert.ok(Math.abs(o.V - a.m) / a.m < 1e-10, `${k}/${t.name} V ${o.V} vs ${a.m}`);
       a.c.forEach((v, j) => assert.ok(Math.abs(o.c[j] - v) < 1e-9 * Math.cbrt(a.m), `${k} c${j}`));
