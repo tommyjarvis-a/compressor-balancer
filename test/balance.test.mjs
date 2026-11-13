@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { derive, add, zero, scale, eig3 } from '../src/mass.js';
-import { frame, imbalance, twoPlane } from '../src/imbalance.js';
+import { frame, imbalance, twoPlane, axisNames } from '../src/imbalance.js';
 import { makeTool, toolMoments, region, rotMat } from '../src/tools.js';
 import { optimize } from '../src/optimize.js';
 import { FIX } from './fixtures.mjs';
@@ -56,3 +56,13 @@ test('optimiser respects bounds when exact balance is infeasible', () => {
   const h = res.params[0].value; assert.ok(h <= 0.2 && h >= 0.1); assert.ok(res.after.r.Umag < res.before.r.Umag);
 });
 
+
+test('L1: residual component names follow the spin-axis frame', () => {
+  assert.deepEqual(axisNames(frame([5, 0, 0], [0, 0, 1])).n, ['x', 'y']);
+  const fr = frame([0, 0, 0], [1, 0, 0]), an = axisNames(fr);
+  assert.deepEqual(an.n, ['u', 'v']); assert.deepEqual(an.w, [1, 0, 0]);
+  const t = makeTool('cylinder', { r: 1, h: 2, x: 3, y: 4, z: 9 }), mom = toolMoments(t), r = imbalance(mom, fr), c = mom.M1.map(v => v / mom.m);
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  close(r.U[0], mom.m * dot(c, an.u), 1e-9, 'U_u = m c·u'); close(r.U[1], mom.m * dot(c, an.v), 1e-9, 'U_v = m c·v');
+  const x = an.u, y = an.v; close(dot([x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]], an.w), 1, 1e-12, 'u × v = w');
+});

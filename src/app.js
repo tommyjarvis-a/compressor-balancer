@@ -1,5 +1,5 @@
 import { KGM3, add, scale, derive, eig3, zero, MESH } from './mass.js';
-import { frame, imbalance, twoPlane } from './imbalance.js';
+import { frame, imbalance, twoPlane, axisNames } from './imbalance.js';
 import { makeTool, toolMoments, valid, PARAMS, COMMON_PARAMS } from './tools.js';
 import { optimize } from './optimize.js';
 import { toStep } from './step-export.js';
@@ -58,14 +58,16 @@ function span(fr) {
 
 function update() {
   const fr = axisFrame(), base = baseMom(), tot = add(base, toolsMom()), r0 = imbalance(base, fr), r1 = imbalance(tot, fr), sp = span(fr);
+  const an = axisNames(fr), vec = a => `(${a.map(v => fmt(v, 3)).join(', ')})`;
   const tp = r1.m ? twoPlane(r1, sp[0], sp[1]) : null, good = v => Math.abs(v) < 0.5 ? 'ok' : '';
   const row = (l, a, b, u, cls = '') => `<span>${l}</span><b class="${cls}">${a}</b><b class="${cls}">${b}</b><span>${u}</span>`;
   $('#resid').innerHTML = `<span></span><b>parts</b><b>+ tools</b><span></span>` +
-    row('Static U<sub>x</sub>', fmt(r0.U[0]), `<i class="${good(r1.U[0])}">${fmt(r1.U[0])}</i>`, 'g·mm', 'big') + row('Static U<sub>y</sub>', fmt(r0.U[1]), `<i class="${good(r1.U[1])}">${fmt(r1.U[1])}</i>`, 'g·mm', 'big') +
+    row(`Static U<sub>${an.n[0]}</sub>`, fmt(r0.U[0]), `<i class="${good(r1.U[0])}">${fmt(r1.U[0])}</i>`, 'g·mm', 'big') + row(`Static U<sub>${an.n[1]}</sub>`, fmt(r0.U[1]), `<i class="${good(r1.U[1])}">${fmt(r1.U[1])}</i>`, 'g·mm', 'big') +
     row('|U|', fmt(r0.Umag), fmt(r1.Umag), 'g·mm') + row('e = |U|/m', fmt(r0.e * 1000), fmt(r1.e * 1000), 'µm') +
-    row('Couple C<sub>x</sub>', fmt(r0.C[0]), fmt(r1.C[0]), 'g·mm²') + row('Couple C<sub>y</sub>', fmt(r0.C[1]), fmt(r1.C[1]), 'g·mm²') + row('|C|', fmt(r0.Cmag), fmt(r1.Cmag), 'g·mm²') +
+    row(`Couple C<sub>${an.n[0]}</sub>`, fmt(r0.C[0]), fmt(r1.C[0]), 'g·mm²') + row(`Couple C<sub>${an.n[1]}</sub>`, fmt(r0.C[1]), fmt(r1.C[1]), 'g·mm²') + row('|C|', fmt(r0.Cmag), fmt(r1.Cmag), 'g·mm²') +
     row('Mass', fmt(r0.m), fmt(r1.m), 'g') +
-    (tp ? row(`Plane A z=${fmt(sp[0], 1)}`, '', fmt(Math.hypot(...tp.U1)), 'g·mm') + row(`Plane B z=${fmt(sp[1], 1)}`, '', fmt(Math.hypot(...tp.U2)), 'g·mm') : '');
+    (tp ? row(`Plane A ${an.n[0] === 'u' ? 'w' : 'z'}=${fmt(sp[0], 1)}`, '', fmt(Math.hypot(...tp.U1)), 'g·mm') + row(`Plane B ${an.n[0] === 'u' ? 'w' : 'z'}=${fmt(sp[1], 1)}`, '', fmt(Math.hypot(...tp.U2)), 'g·mm') : '');
+  if (an.n[0] === 'u') $('#resid').innerHTML += `<span class="note">u/v/w in world: u ${vec(an.u)} · v ${vec(an.v)} · w (axis) ${vec(an.w)}</span>`;
   view.setTools(st.tools.filter(valid));
   const com = tot.m ? tot.M1.map(v => v / tot.m) : [0, 0, 0];
   view.setMarks(r1, fr, com, sp);
@@ -73,9 +75,10 @@ function update() {
 }
 
 // ---------- UI ----------
+const srcText = b => `${b.src}${b.material ? ' · ' + esc(b.material) : ''} · V ${fmt(b.vol.m)} mm³${b.unc ? ` · ±${fmt(b.unc.dc * 1000, 2)} µm CoM` : ''}`;
 function renderBodies() {
   $('#bodies tbody').innerHTML = st.bodies.map((b, i) => `<tr><td><input type="checkbox" data-on="${i}" ${b.on ? 'checked' : ''}></td>
-    <td>${esc(b.name)}${b.open ? ` <span title="${b.open} open/non-manifold edges: mesh not closed, mass properties unreliable">⚠</span>` : ''}<div class="src">${b.src}${b.material ? ' · ' + esc(b.material) : ''} · V ${fmt(b.vol.m)} mm³${b.unc ? ` · ±${fmt(b.unc.dc * 1000, 2)} µm CoM` : ''}</div></td>
+    <td>${esc(b.name)}${b.open ? ` <span title="${b.open} open/non-manifold edges: mesh not closed, mass properties unreliable">⚠</span>` : ''}<div class="src" data-src="${i}">${srcText(b)}</div></td>
     <td><input type="number" step="any" data-rho="${i}" value="${b.rho}"></td><td data-mass="${i}">${fmt(b.vol.m * b.rho * KGM3)}</td></tr>`).join('');
 }
 function renderAxis() {
@@ -100,7 +103,7 @@ const defBounds = (k, v) => /^(a0|rx|ry|rz)$/.test(k) ? [-180, 180] : k === 'swe
 
 $('#panel').addEventListener('input', e => {
   const el = e.target, card = el.closest('.tool');
-  if (el.dataset.rho) { const b = st.bodies[+el.dataset.rho]; b.rho = +el.value; b.src = 'user'; $(`[data-mass="${el.dataset.rho}"]`).textContent = fmt(b.vol.m * b.rho * KGM3); return update(); }
+  if (el.dataset.rho) { const b = st.bodies[+el.dataset.rho]; b.rho = +el.value; b.src = 'user'; $(`[data-mass="${el.dataset.rho}"]`).textContent = fmt(b.vol.m * b.rho * KGM3); $(`[data-src="${el.dataset.rho}"]`).innerHTML = srcText(b); return update(); }
   if (!card) return;
   const t = st.tools[+card.dataset.i], k = el.dataset.k;
   if (k === 'pts') { const p = el.value.split(';').map(s => s.split(',').map(Number)).filter(p => p.length === 2 && p.every(isFinite)); if (p.length >= 3) t.pts = p; }
@@ -149,14 +152,18 @@ function runOpt() {
 
 // ---------- export / session ----------
 function save(name, text, type) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1e4); }
+const resRows = (r, an) => [[`residual`, `U${an.n[0]} g.mm`, r.U[0]], ['residual', `U${an.n[1]} g.mm`, r.U[1]], ['residual', `C${an.n[0]} g.mm2`, r.C[0]], ['residual', `C${an.n[1]} g.mm2`, r.C[1]],
+  ...(an.n[0] === 'u' ? ['u', 'v', 'w'].map(k => ['basis', `${k} (world)`, an[k].join(' ')]) : [])];
+const resJson = (r, an) => ({ components: an.n, basis: { u: an.u, v: an.v, w: an.w }, U: r.U, C: r.C, mass: r.m,
+  note: an.n[0] === 'u' ? 'U and C are components along u, v (world vectors in basis); w is the spin axis' : 'U and C are world x, y components (spin axis +Z)' });
 function exportAs(kind) {
   const { fr, r1 } = update();
   if (kind === 'step') return st.tools.some(t => valid(t) && t.sign > 0) || st.tools.some(valid) ? save('counterweights.stp', toStep(st.tools), 'application/step') : status('No valid tools to export');
   if (kind === 'csv') return save('counterweights.csv', 'tool,kind,role,sign,param,value\n' + st.tools.flatMap(t => [...PARAMS[t.kind], ...COMMON_PARAMS].map(k => [t.name, t.kind, t.role, t.sign, k, t[k]].join(','))).join('\n') +
-    `\n\nresidual,Ux g.mm,${r1.U[0]}\nresidual,Uy g.mm,${r1.U[1]}\nresidual,Cx g.mm2,${r1.C[0]}\nresidual,Cy g.mm2,${r1.C[1]}\n`, 'text/csv');
+    `\n\n${resRows(r1, axisNames(fr)).map(r => r.join(',')).join('\n')}\n`, 'text/csv');
   save('balance-session.json', JSON.stringify({ app: 'compressor-balancer', version: VERSION, units: { length: 'mm', mass: 'g', density: 'kg/m3' },
     axis: { origin: fr.o, R: fr.R, choice: $('#axis').value }, bodies: st.bodies.map(b => ({ name: b.name, on: b.on, rho: b.rho, src: b.src, mass: b.vol.m * b.rho * KGM3 })),
-    tools: st.tools, residual: { U: r1.U, C: r1.C, mass: r1.m }, optimisation: st.last }, null, 1), 'application/json');
+    tools: st.tools, residual: resJson(r1, axisNames(fr)), optimisation: st.last }, null, 1), 'application/json');
 }
 function loadSession(j) {
   if (!Array.isArray(j.tools)) return status('JSON has no tools[]');

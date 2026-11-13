@@ -29,3 +29,10 @@ export function twoPlane(r, z1, z2) {
   const U2 = [0, 1].map(k => (Mz[k] - z1 * r.U[k]) / d), U1 = [0, 1].map(k => r.U[k] - U2[k]);
   return { U1, U2 };
 }
+
+// Component names for residuals in frame fr: world x/y when the frame is the world (axis +Z),
+// otherwise u/v with their world basis vectors (u, v ⊥ spin axis w; right-handed u × v = w).
+export function axisNames(fr) {
+  const R = fr.R, id = R.every((v, i) => v === (i % 4 === 0 ? 1 : 0));
+  return { n: id ? ['x', 'y'] : ['u', 'v'], u: R.slice(0, 3), v: R.slice(3, 6), w: R.slice(6, 9) };
+}
