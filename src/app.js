@@ -51,6 +51,7 @@ async function loadFiles(files) {
       catch (e) { if (e.cancelled) { status(`${f.name}: import cancelled`); break; } card('err', `<b>Could not import ${esc(f.name)}</b>: ${esc(e.message)}`); status(`${f.name}: import failed`); continue; }
       st.bodies.push(...r.bodies);
       for (const w of r.warn) card('warn', `${esc(f.name)}: ${esc(w)}`);
+      for (const w of r.info) card('info quiet', `${esc(f.name)}: ${esc(w)}`);
       const nrem = r.bodies.filter(b => b.sign < 0).length, s = r.stats;
       status(`${f.name}: ${r.bodies.length} bodies · ${s.mode} · ${(s.tris / 1e3).toFixed(0)}k triangles · ${(s.ms / 1000).toFixed(1)} s` + (nrem ? ` (${nrem} REMOVE_ solid${nrem > 1 ? 's' : ''} counted as material removal, negative mass)` : ''));
     }
@@ -99,7 +100,7 @@ function update() {
 }
 
 // ---------- UI ----------
-const srcText = b => `${b.sign < 0 ? 'removal (−m) · ' : ''}${b.src}${b.material ? ' · ' + esc(b.material) : ''} · V ${fmt(b.vol.m)} mm³${b.unc ? ` · ±${fmt(b.unc.dc * 1000, 2)} µm CoM` : ''}`;
+const srcText = b => `${b.sign < 0 ? 'removal (−m) · ' : ''}${b.src}${b.material ? ' · ' + esc(b.material) : ''} · V ${fmt(b.vol.m)} mm³${b.unc ? ` · ${b.unc.rough ? '~' : ''}±${fmt(b.unc.dc * 1000, 2)} µm CoM` : ''}`;
 function renderBodies() {
   $('#bodies tbody').innerHTML = st.bodies.map((b, i) => `<tr><td><input type="checkbox" data-on="${i}" ${b.on ? 'checked' : ''}></td>
     <td>${esc(b.name)}${b.unreliable ? ` <span class="bad" title="${b.open} open/non-manifold edges (${pct(b.frac)} of edges), volume closure error ${fmt(b.eps, 2)}: mesh not closed, mass properties unreliable">⚠</span>` : b.open ? ` <span class="note" title="${b.open} open/non-manifold edges (${pct(b.frac)} of edges) but the mesh closes (volume closure error ${fmt(b.eps, 2)} ≤ 1e-4): mass properties OK">ⓘ</span>` : ''}<div class="src" data-src="${i}">${srcText(b)}</div></td>

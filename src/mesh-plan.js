@@ -10,6 +10,13 @@ export const LIMITS = {
   perBody: 600e3, total: 1.2e6, // triangles in the final pass
   refine: 4,              // pass 2: deflection/4, angle/2 → ≈4× triangles
 };
+// L5: a coarsened / fast-fallback mesh is only worth a warning when its estimated error matters for any body:
+// relative volume (mass) error > 1e-4, or CoM uncertainty > 1 µm. 1e-4 is 0.01 % of mass, well below typical
+// density uncertainty (±0.5 %) and a uniform mass error does not move the balance; 1 µm of CoM error is 1 g·mm of
+// static imbalance per kg (the residual display turns green below 0.5 g·mm; ISO 21940 G2.5 at 10 000 rpm allows
+// e ≈ 2.4 µm). The estimate is the conservative |fine − extrapolated| (accurate) or probe-based (fast) value.
+// Below both limits the note is shown as a quiet info card.
+export const ERR = { rel: 1e-4, com: 1e-3 /* mm */ };
 export const PROBE = { linearDeflectionType: 'bounding_box_ratio', linearDeflection: 0.01, angularDeflection: 0.5 };
 
 // OCCT parameters; scale ≥ 1 coarsens (deflection ×scale, angle ×√scale), pass 2 refines.
@@ -26,9 +33,9 @@ export function predict(probeTris, D, p) {
 }
 
 // Plan from the probe: coarsening scale so that the final pass fits both budgets, and whether the refined
-// (accurate) pass is planned. Returns warnings for the UI.
+// (accurate) pass is planned. warn: budget problems; note: accuracy-related (gated by ERR after meshing).
 export function plan(probeTris, D, mode, L = LIMITS) {
-  const warn = [], refine = mode === 'accurate', k = refine ? L.refine : 1;
+  const warn = [], note = [], refine = mode === 'accurate', k = refine ? L.refine : 1;
   const fit = s => { const t = predict(probeTris, D, passParams(D, mode, s, 1, L)).map(v => v * k); return Math.max(t.reduce((a, b) => a + b, 0) / L.total, Math.max(0, ...t) / L.perBody); };
   let s = 1, capped = false;
   for (let i = 0; i < 40 && fit(s) > 1; i++) {
@@ -37,8 +44,8 @@ export function plan(probeTris, D, mode, L = LIMITS) {
     s = n;
   }
   if (capped) warn.push(`coarsest mesh settings reached and the predicted size still exceeds the triangle budget`);
-  if (s > 1) warn.push(`mesh coarsened ×${s < 1e4 ? s.toFixed(1) : s.toExponential(1)} to stay within ${fmtK(L.total)} triangles (${fmtK(L.perBody)} per body); accuracy is lower — see the per-body uncertainty`);
-  return { scale: s, refine, warn, base: passParams(D, mode, s, 1, L), fine: refine ? passParams(D, mode, s, 2, L) : null };
+  if (s > 1) note.push(`mesh coarsened ×${s < 1e4 ? s.toFixed(1) : s.toExponential(1)} to stay within ${fmtK(L.total)} triangles (${fmtK(L.perBody)} per body)`);
+  return { scale: s, refine, warn, note, base: passParams(D, mode, s, 1, L), fine: refine ? passParams(D, mode, s, 2, L) : null };
 }
 // After the base pass: run the refined pass only if ≈refine × actual triangles fits the budgets.
 export function refineOk(tris, L = LIMITS) {

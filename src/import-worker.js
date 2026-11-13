@@ -20,6 +20,6 @@ self.onmessage = async ({ data: { buf, name, mode, defRho, wasm } }) => {
       b.pos = Float32Array.from(b.pos); b.idx = Uint32Array.from(b.idx); b.nrm = b.nrm && Float32Array.from(b.nrm);
       transfer.push(b.pos.buffer, b.idx.buffer); if (b.nrm) transfer.push(b.nrm.buffer);
     }
-    self.postMessage({ type: 'done', bodies: r.bodies, warn: r.warn, stats: r.stats }, transfer);
+    self.postMessage({ type: 'done', bodies: r.bodies, warn: r.warn, info: r.info, stats: r.stats }, transfer);
   } catch (e) { post('error', { message: e?.message || String(e) }); }
 };
