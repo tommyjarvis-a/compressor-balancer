@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.7-alpha — 2026-11-13
+
+- **Fix (High, H2):** finishing a file load no longer clears a stale assembly-CG flag. `touchCG()` can only *set*
+  stale (via `holdStale`); only a successful *Calculate CG* clears it. A session restore keeps the saved CG
+  numbers only on an exact full match of every saved body (and the same body count). Anything else drops the
+  values and the marker, leaves the result stale, keeps any partial selection, and shows a notice — so a CG
+  saved from a different file cannot appear as current.
+- **Fix (Medium, M6):** session matching treats `REMOVE_*` status (the mass sign) as a hard key, so a body is
+  never paired with its removal counterpart even when the volume and bbox are identical. The base name (without
+  a ` #n` suffix) is also a hard key when it is unique on both sides; the volume + bbox fingerprint only decides
+  among same-name, same-sign candidates. A changed body count leaves unmatched bodies untouched and the CG
+  dropped/stale, with a notice.
+- Tests: mismatched restore + load completion stays stale; a cross-file session drops the CG; a `REMOVE_` twin
+  is not matched; add/remove a body leaves the CG stale; a unique base name blocks a fingerprint match to a
+  different name (45 Node tests incl. the optional OCP check).
+
+
 ## 0.1.6-alpha — 2026-11-13
 
 - **Fix (Medium, M3):** the gold assembly-CG marker, the RGB origin arrows and the dashed origin-to-CG line

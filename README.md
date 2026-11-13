@@ -44,10 +44,12 @@ Plain ES modules, no framework, no build step. Files never leave the browser.
      CoM ball of the enabled bodies + tools. The numbers still appear if the 3-D view is unavailable.
      An inline message is shown if nothing is selected or the net mass is zero or negative. The result is **not**
      recalculated automatically: if the selection, a density, or the body set changes, the readout and marker are
-     marked *stale* until you click *Calculate CG* again. The result is included in the JSON and CSV exports and
-     in a saved session. On reload, bodies are matched by index plus a volume and bounding-box fingerprint (the
-     name is only a hint). If a match is ambiguous or missing, that body's settings are left untouched, the CG is
-     marked stale and a notice is shown.
+     marked *stale* until you click *Calculate CG* again. Loading a file or session never clears that flag — only
+     a successful *Calculate CG* does. The result is included in the JSON and CSV exports and in a saved session.
+     On reload, bodies are matched by sign (`REMOVE_*` vs a positive body), by unique base name (the name without
+     a ` #n` suffix), and otherwise by volume + bbox fingerprint among same-name, same-sign candidates. The saved
+     CG numbers are kept only on an exact full match; otherwise they are dropped, the result is marked stale and
+     a notice is shown. Unmatched bodies are left untouched.
 3. **Spin axis** = a **point + direction** (world mm). Set it by
    - a preset: world X/Y/Z through the point (default Z through 0,0,0), or a body's principal axis (the
      eigenvector whose principal moment is most distinct, i.e. the symmetry axis of a shaft/rotor, through its CoM);
@@ -150,8 +152,9 @@ Also: mesh closure check (T-junction / sliver / missing face), error-gated coars
 axis vs the geometry rotated onto Z, cylinder and edge-loop fits on a tilted fixture (plus rejection cases),
 optimiser about a tilted axis, M2 field-by-field direction entry (boxes not rewritten, |U| ≈ 108), assembly CG of a
 multi-body fixture including a `REMOVE_*` solid and a subset selection (vs closed form and optional OpenCascade
-`BRepGProp`), unique display-name suffixes, and session restore by index + volume/bbox fingerprint (duplicate
-names, reordered or mismatched sets, legacy name-only sessions). Synthetic fixture `cg-assembly.stp`.
+`BRepGProp`), unique display-name suffixes, and session restore by sign, unique base name, and volume/bbox
+fingerprint (duplicate names, reordered or mismatched sets, `REMOVE_` twins, cross-file / changed body counts,
+legacy name-only sessions). Synthetic fixture `cg-assembly.stp`.
 
 Browser responsiveness: `tools/browser-smoke.cjs` imports the fixtures (or given files) in Chromium and WebKit via
 Playwright and fails if any animation frame gap exceeds 1.5 s or the import takes longer than 60 s.
@@ -181,7 +184,7 @@ Both accept `BROWSERS=chromium,webkit,msedge` (msedge = installed Microsoft Edge
 - One small module per concern (`mass`, `imbalance`, `tools`, `nm`, `optimize`, `step-export`, `step-meta`, `fit`, `view`,
   `app`) to keep future edits and reviews cheap.
 
-## Limitations (0.1.6-alpha)
+## Limitations (0.1.7-alpha)
 
 - Very large assemblies are meshed coarser to fit the triangle budget (warning shown); a single OCCT call cannot be
   interrupted except by Cancel/timeout, which discards that file.
