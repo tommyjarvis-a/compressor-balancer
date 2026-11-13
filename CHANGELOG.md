@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.5-alpha — 2026-11-13
+
+- **Assembly CG**: *Calculate CG* next to the body list computes the mass-weighted combined centre of gravity of
+  the bodies currently selected on the left (each body's density and mass; `REMOVE_*` bodies count as negative
+  mass). Multi-select: Ctrl/⌘-click to add or remove a body, Shift-click a range (click still selects one;
+  Esc / empty space clears). The readout shows X, Y, Z in mm from the WCS origin (0, 0, 0), the total mass (g)
+  and how many bodies were included. A gold sphere + crosshair with a constant-size "CG" label (drawn through
+  geometry) marks the point in the 3-D view, distinct from the red residual CoM ball. The readout still works
+  when WebGL is unavailable.
+  - No bodies selected, or net mass zero/negative: an inline message, no marker.
+  - **Stale handling:** the result and marker stay visible after a calculation. If the selection, a density, or
+    the body set then changes, both are marked stale until *Calculate CG* is clicked again (they are not
+    recalculated automatically).
+  - The result is written to the JSON (`assemblyCG`) and CSV exports and restored from a session (selection is
+    recovered by body name; the result is marked stale if the current bodies do not match).
+- **Model-space origin** at (0, 0, 0): small X/Y/Z axes in red/green/blue with a constant-size "Origin 0,0,0"
+  label, drawn through geometry. Separate from the lower-left WCS triad and from the gold assembly-CG marker.
+  A dashed line is drawn from the origin to the CG while a CG result is shown.
+- Tests: combined CoM vs closed form and OpenCascade `BRepGProp` on fixture `cg-assembly.stp` (includes a
+  `REMOVE_*` body and a subset selection) (33 Node tests incl. the optional OCP check); `tools/ui-smoke.cjs`
+  covers Calculate CG, the marker, the no-selection message, stale handling, the origin marker, and JSON/CSV/session.
+
+
 ## 0.1.4-alpha — 2026-11-13
 
 - **Fix (Medium, M2):** typing the spin-axis direction one field at a time no longer changes the axis.

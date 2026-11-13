@@ -30,9 +30,20 @@ Plain ES modules, no framework, no build step. Files never leave the browser.
      (relative, for a half-diagonal shift: `|ΣA|·(D/2)/(3|V|)`, ΣA = vector area of the mesh) or more than 5 % of its
      edges are open/non-manifold (sheet body / bad export) — mass properties unreliable. A few bad edges that do
      not change the volume (T-junctions, duplicated seam nodes, slivers) only get a quiet ⓘ.
-   - Click a row (or the body in the 3-D view) to select and highlight it; Esc or a click on empty space deselects.
-     Orbit drags are not clicks (> 5 px pointer travel).
-   - Untick a body to exclude it (e.g. housings that do not rotate).
+   - Click a row (or the body in the 3-D view) to select and highlight it; **Ctrl/⌘-click** adds or removes a body,
+     **Shift-click** selects a range; Esc or a click on empty space deselects. Orbit drags are not clicks
+     (> 5 px pointer travel).
+   - Untick a body to exclude it from residuals and the 3-D view (e.g. housings that do not rotate).
+   - **Calculate CG** computes the mass-weighted combined centre of gravity of the *selected* bodies (not the
+     visibility ticks), using each body's density and mass. `REMOVE_*` solids count as negative mass, the same
+     way as the residual mass properties. The readout is X, Y, Z in mm from the WCS origin (0, 0, 0), plus total
+     mass (g) and the number of bodies. A gold sphere and crosshair with a constant-size "CG" label (drawn through
+     geometry, stays the same size when you zoom or orbit) marks the point; it is distinct from the red residual
+     CoM ball of the enabled bodies + tools. The numbers still appear if the 3-D view is unavailable.
+     An inline message is shown if nothing is selected or the net mass is zero or negative. The result is **not**
+     recalculated automatically: if the selection, a density, or the body set changes, the readout and marker are
+     marked *stale* until you click *Calculate CG* again. The result is included in the JSON and CSV exports and
+     in a saved session.
 3. **Spin axis** = a **point + direction** (world mm). Set it by
    - a preset: world X/Y/Z through the point (default Z through 0,0,0), or a body's principal axis (the
      eigenvector whose principal moment is most distinct, i.e. the symmetry axis of a shaft/rotor, through its CoM);
@@ -54,8 +65,12 @@ Plain ES modules, no framework, no build step. Files never leave the browser.
      plane through the CoM. Goal ≈ (0, 0). With U = 0 the axis is a principal axis (dynamically balanced).
    - e = |U|/m (µm) for comparison with ISO 21940-11 (ex-1940) grades, and the equivalent two-plane residuals at
      the axial ends of the parts (plane A / B, g·mm).
-   - 3D view: red ball = CoM, black line = spin axis, red arrow = static imbalance direction, blue arrows = couple
-     (as an opposed pair at two planes). Arrow length is log-scaled; arrows disappear when the residual is ~0.
+   - 3D view: red ball = residual CoM of the enabled bodies + tools, black line = spin axis, red arrow = static
+     imbalance direction, blue arrows = couple (as an opposed pair at two planes). Arrow length is log-scaled;
+     arrows disappear when the residual is ~0. A small RGB (X/Y/Z) triad with an "Origin 0,0,0" label sits at the
+     model-space origin, constant size on screen and drawn through geometry; it is separate from the lower-left
+     WCS inset triad and from the gold assembly-CG marker. A dashed line runs from the origin to the assembly CG
+     while one is shown.
 4. **Correction tools**: *Sector* (annular sector: ri, ro, start angle a0, sweep), *Cylinder* (r, optional bore ri),
    *Profile* (extruded polygon, local `x,y; x,y; …` in mm, with a scale). All are extruded along their local +Z by h,
    rotated by rx→ry→rz (R = Rz·Ry·Rx, degrees) and placed at x, y, z. Each tool has its own ρ, a role
@@ -66,8 +81,8 @@ Plain ES modules, no framework, no build step. Files never leave the browser.
    `J = |U|² + (w·|C|/L)² + λ·(Δm)²` (L defaults to the axial span, converting g·mm² to g·mm; λ trades residual for
    added mass). Results: suggested values, residuals before → after, added tool mass. *Undo* restores the tools.
    For full static + couple balance use at least two tools in two axial planes (4 free values: e.g. a0 and h of each).
-6. **Export**: *Parameters JSON* (session: axis, bodies + densities, tools, residuals, last optimisation; drop it
-   back in to reload the tools), *CSV* (tool, param, value + residuals), *Counterweights STEP* (AP214, one solid
+6. **Export**: *Parameters JSON* (session: axis, bodies + densities, tools, residuals, assembly CG, last optimisation; drop it
+   back in to reload the tools and the last CG), *CSV* (tool, param, value + residuals + assembly CG), *Counterweights STEP* (AP214, one solid
    per tool, mm). Removal tools are written as solids named `REMOVE_<name>` with the removed material's
    density, and carry `"removal": true` (JSON) / a `removal` column (CSV).
    - **Re-importing a `REMOVE_` solid** (e.g. the counterweights STEP dropped back in with the parts) counts it as
@@ -129,21 +144,25 @@ triangle-budget prediction and fast fallback, import-pipeline accuracy. Fixtures
 
 Also: mesh closure check (T-junction / sliver / missing face), error-gated coarsening notes, residuals about a tilted
 axis vs the geometry rotated onto Z, cylinder and edge-loop fits on a tilted fixture (plus rejection cases),
-optimiser about a tilted axis, M2 field-by-field direction entry (boxes not rewritten, |U| ≈ 108).
+optimiser about a tilted axis, M2 field-by-field direction entry (boxes not rewritten, |U| ≈ 108), assembly CG of a
+multi-body fixture including a `REMOVE_*` solid and a subset selection (vs closed form and optional OpenCascade
+`BRepGProp`). Synthetic fixture `cg-assembly.stp`.
 
 Browser responsiveness: `tools/browser-smoke.cjs` imports the fixtures (or given files) in Chromium and WebKit via
 Playwright and fails if any animation frame gap exceeds 1.5 s or the import takes longer than 60 s.
-UI: `HEADED=1 node tools/ui-smoke.cjs [url]` checks the triad (pixels, follows orbit, resize), selection
-(view ⇄ list, drag ≠ click, Esc, empty space), typed axis (fields kept as typed, M2 field-by-field unit vector,
-zero / non-numeric rejection, unit readout), picking (cylinder, circle edge, 2 points), the optimiser
-about a tilted axis and JSON/CSV export + session reload, on `test/fixtures/tilted-rotor.stp`.
+UI: `HEADED=1 node tools/ui-smoke.cjs [url]` checks the triad (pixels, follows orbit, resize), the model-space
+origin marker, selection (view ⇄ list, drag ≠ click, Esc, empty space, Ctrl-click multi-select), Calculate CG
+(no-selection message, marker, stale on selection/density change, dashed line from the origin), typed axis
+(fields kept as typed, M2 field-by-field unit vector, zero / non-numeric rejection, unit readout), picking
+(cylinder, circle edge, 2 points), the optimiser about a tilted axis and JSON/CSV export + session reload
+(including assembly CG), on `test/fixtures/tilted-rotor.stp`.
 Both accept `BROWSERS=chromium,webkit,msedge` (msedge = installed Microsoft Edge).
 
 ## Size, dependencies, token/code efficiency
 
 | Asset | Raw | gzip | When loaded |
 |---|---|---|---|
-| App code (`src/*.js`, html, css; ~1100 lines) | 87 KB | 32 KB | page load (worker modules on first STEP drop) |
+| App code (`src/*.js`, html, css; ~1260 lines) | 96 KB | 35 KB | page load (worker modules on first STEP drop) |
 | three.js 0.187.0 tree-shaken (`vendor/three/three.lite.min.js`) | 607 KB | 152 KB | page load |
 | occt-import-js 0.0.23 JS | 97 KB | 27 KB | first STEP drop |
 | occt-import-js 0.0.23 WASM | 7.60 MB | 3.10 MB | first STEP drop |
@@ -156,7 +175,7 @@ Both accept `BROWSERS=chromium,webkit,msedge` (msedge = installed Microsoft Edge
 - One small module per concern (`mass`, `imbalance`, `tools`, `nm`, `optimize`, `step-export`, `step-meta`, `fit`, `view`,
   `app`) to keep future edits and reviews cheap.
 
-## Limitations (0.1.4-alpha)
+## Limitations (0.1.5-alpha)
 
 - Very large assemblies are meshed coarser to fit the triangle budget (warning shown); a single OCCT call cannot be
   interrupted except by Cancel/timeout, which discards that file.
