@@ -124,15 +124,27 @@ export function matchBodies(saved, current) {
   return { map, unmatched, stale: unmatched.length > 0, notice: reasons.join('; ') };
 }
 
-// Keep a restored CG only on an exact full match of every saved body. Otherwise drop the numbers
-// (do not show a CG from another file as current) and leave the result stale, with any partial
-// selection still applied so the user can Calculate CG.
+// A restored CG is current only if the saved CG was not stale AND every saved body matches
+// exactly with the same body count (H3). A missing stale flag in an older session is treated
+// as stale. Otherwise keep the numbers but marked stale (exact match of a stale/legacy save)
+// or drop them (mismatch / body-count change), and include a notice.
+export function savedWasStale(saved) {
+  if (!saved || !Object.prototype.hasOwnProperty.call(saved, 'stale') || saved.stale == null) return true;
+  return !!saved.stale;
+}
 export function restoreCG(match, saved = {}, counts = {}) {
   const sels = (match.map || []).filter(i => i >= 0);
   const countOk = counts.saved == null || counts.current == null || counts.saved === counts.current;
-  const exact = !!(match && !match.stale && match.map.length && match.map.every(i => i >= 0) && countOk);
-  const notice = [match.notice, !countOk ? `body count changed (${counts.saved} → ${counts.current})` : ''].filter(Boolean).join('; ');
-  if (exact) return { keep: true, stale: false, dropped: false, sels, c: saved.c, m: saved.mass ?? saved.m, notice: '' };
+  const sessionOk = counts.sessionStale == null || counts.sessionStale === false;
+  const exact = !!(match && !match.stale && match.map.length && match.map.every(i => i >= 0) && countOk && sessionOk);
+  const wasStale = savedWasStale(saved);
+  const whyStale = wasStale && exact
+    ? (Object.prototype.hasOwnProperty.call(saved, 'stale') && saved.stale != null
+      ? 'saved assembly CG was stale' : 'session did not record whether the assembly CG was current')
+    : '';
+  const notice = [...new Set([match.notice, counts.sessionNotice, !countOk ? `body count changed (${counts.saved} → ${counts.current})` : '', whyStale].filter(Boolean).flatMap(s => String(s).split('; ')))].join('; ');
+  if (exact && !wasStale) return { keep: true, stale: false, dropped: false, sels, c: saved.c, m: saved.mass ?? saved.m, notice: '' };
+  if (exact) return { keep: true, stale: true, dropped: false, sels, c: saved.c, m: saved.mass ?? saved.m, notice };
   return { keep: false, stale: true, dropped: true, sels, c: null, m: null, notice };
 }
 // H2: the live key going stale can only set the flag; it never clears it. Only a successful
@@ -141,4 +153,32 @@ export function holdStale(cg, key) {
   if (!cg || cg.error) return cg;
   if (cg.key !== key) return { ...cg, stale: true };
   return cg;
+}
+export function cgKey(sels, bodies) {
+  return (sels || []).map(i => { const b = bodies[i]; return b ? `${i}:${b.name}:${b.rho}:${b.sign}:${b.vol?.m ?? b.vol}` : i + ':?'; }).join(',') + '#' + bodies.length;
+}
+export const CG_EXPORT_NOTE = 'mass-weighted CoM of the listed bodies, mm from WCS origin 0,0,0; bodies are matched on restore by sign, unique base name, and volume/bbox';
+export function exportAssemblyCG(cg, bodies, sels = []) {
+  if (!cg || cg.error || cg.dropped || !Array.isArray(cg.c)) return undefined;
+  const idx = cg.indices || sels;
+  return { c: cg.c, mass: cg.m, count: cg.n ?? idx.length, bodies: idx.map(i => bodyRef(bodies[i], i)), stale: !!cg.stale, note: CG_EXPORT_NOTE };
+}
+// Apply saved densities / on flags and restore the assembly CG onto `current` (mutated in place).
+// Then apply holdStale as load-completion would, so a stale restore cannot become current.
+export function restoreSession(session, current) {
+  const densMatch = matchBodies(session.bodies || [], current);
+  for (let si = 0; si < densMatch.map.length; si++) {
+    const ci = densMatch.map[si], b = (session.bodies || [])[si];
+    if (ci >= 0 && b) Object.assign(current[ci], { rho: b.rho, src: b.src, on: b.on });
+  }
+  const j = session.assemblyCG;
+  if (!j || !Array.isArray(j.c)) return { densMatch, sels: [], cg: null, exported: undefined };
+  const cgMatch = matchBodies((j.bodies || []).map(asSaved), current);
+  const rest = restoreCG(cgMatch, j, { saved: Array.isArray(session.bodies) ? session.bodies.length : undefined, current: current.length, sessionStale: densMatch.stale, sessionNotice: densMatch.notice });
+  const sels = rest.sels, key = cgKey(sels, current), names = sels.map(i => current[i].name);
+  const cg = rest.keep
+    ? { c: rest.c, m: rest.m, n: sels.length, names, indices: sels, key, stale: rest.stale, dropped: false, notice: rest.notice }
+    : { dropped: true, stale: true, notice: rest.notice, key, names, indices: sels, c: null, m: null };
+  const after = holdStale(cg, key);
+  return { densMatch, cgMatch, rest, sels, cg: after, exported: exportAssemblyCG(after, current, sels) };
 }
