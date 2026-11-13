@@ -6,6 +6,8 @@
   "description": "Client-side STEP mass properties and two-plane balancing for e-compressor rotating assemblies",
   "license": "MIT",
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "accuracy": "node tools/accuracy.mjs",
+    "fixtures": "node tools/gen-fixtures.mjs"
   }
 }

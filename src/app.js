@@ -2,6 +2,7 @@ import { KGM3, add, scale, meshMoments, derive, eig3, openEdges, zero, richardso
 import { frame, imbalance, twoPlane } from './imbalance.js';
 import { makeTool, toolMoments, valid, PARAMS, COMMON_PARAMS } from './tools.js';
 import { optimize } from './optimize.js';
+import { toStep } from './step-export.js';
 import { readDensities } from './step-meta.js';
 import { createView } from './view.js';
 
@@ -19,6 +20,7 @@ const occt = () => occtP ??= new Promise((res, rej) => {
 
 async function loadFiles(files) {
   for (const f of files) {
+    if (/\.json$/i.test(f.name)) { loadSession(JSON.parse(await f.text())); continue; }
     status(`Loading OpenCascade… (${f.name})`);
     const o = await occt(), buf = new Uint8Array(await f.arrayBuffer());
     status(`Reading ${f.name}…`); await new Promise(r => setTimeout(r, 20));
@@ -134,6 +136,7 @@ $('#panel').addEventListener('click', e => {
     st.tools.push(t); renderTools(); update(); if (!st.bodies.length) view.fit();
   }
   if (el.dataset.del) { st.tools.splice(+el.dataset.del, 1); renderTools(); update(); }
+  if (el.dataset.exp) exportAs(el.dataset.exp);
   if (el.id === 'undo' && st.undo) { st.tools = st.undo; st.undo = null; el.disabled = true; renderTools(); update(); $('#optout').textContent = 'Reverted.'; }
   if (el.id === 'run') runOpt();
 });
@@ -153,6 +156,24 @@ function runOpt() {
   $('#optout').innerHTML = `<table><tr><th>Tool.param</th><th>from</th><th>→ suggested</th></tr>${st.last.params.map(p => `<tr><td>${esc(p.tool)}.${p.param}</td><td>${fmt(p.from)}</td><td><b>${fmt(p.value, 4)}</b></td></tr>`).join('')}</table>
     <p>|U| ${b ? fmt(b.Umag) : '—'} → <b>${fmt(a.Umag)}</b> g·mm · |C| ${b ? fmt(b.Cmag) : '—'} → <b>${fmt(a.Cmag)}</b> g·mm² · tools mass ${fmt(dm)} g · ${res.evals} evals, ${fmt(st.last.ms, 0)} ms</p>`;
   renderTools(); update();
+}
+
+// ---------- export / session ----------
+function save(name, text, type) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1e4); }
+function exportAs(kind) {
+  const { fr, r1 } = update();
+  if (kind === 'step') return st.tools.some(t => valid(t) && t.sign > 0) || st.tools.some(valid) ? save('counterweights.stp', toStep(st.tools), 'application/step') : status('No valid tools to export');
+  if (kind === 'csv') return save('counterweights.csv', 'tool,kind,role,sign,param,value\n' + st.tools.flatMap(t => [...PARAMS[t.kind], ...COMMON_PARAMS].map(k => [t.name, t.kind, t.role, t.sign, k, t[k]].join(','))).join('\n') +
+    `\n\nresidual,Ux g.mm,${r1.U[0]}\nresidual,Uy g.mm,${r1.U[1]}\nresidual,Cx g.mm2,${r1.C[0]}\nresidual,Cy g.mm2,${r1.C[1]}\n`, 'text/csv');
+  save('balance-session.json', JSON.stringify({ app: 'compressor-balancer', version: VERSION, units: { length: 'mm', mass: 'g', density: 'kg/m3' },
+    axis: { origin: fr.o, R: fr.R, choice: $('#axis').value }, bodies: st.bodies.map(b => ({ name: b.name, on: b.on, rho: b.rho, src: b.src, mass: b.vol.m * b.rho * KGM3 })),
+    tools: st.tools, residual: { U: r1.U, C: r1.C, mass: r1.m }, optimisation: st.last }, null, 1), 'application/json');
+}
+function loadSession(j) {
+  if (!Array.isArray(j.tools)) return status('JSON has no tools[]');
+  st.tools = j.tools.map(({ id, ...t }) => makeTool(t.kind, t));
+  for (const b of j.bodies || []) { const m = st.bodies.find(x => x.name === b.name); if (m) Object.assign(m, { rho: b.rho, src: b.src, on: b.on }); }
+  renderBodies(); renderTools(); update(); status('Session loaded');
 }
 
 const drop = $('#drop');
