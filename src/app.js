@@ -79,18 +79,21 @@ function principal(i) {
 }
 const axisFrame = () => frame(st.axis.p, st.axis.d);
 const num = v => +(+v).toPrecision(10);
-function setAxis(a, src, msg = '') {
+function setAxis(a, src, msg = '', fill = true) {
   st.axis = { p: a.p.map(num), d: a.d.map(num), src }; st.pick = null; view.setPicks([]); pickUI();
-  ['#ox', '#oy', '#oz'].forEach((s, k) => $(s).value = st.axis.p[k]); ['#dx', '#dy', '#dz'].forEach((s, k) => $(s).value = st.axis.d[k]);
+  // presets, picks and session restore fill the boxes; typed input must not (M2: rewriting the
+  // direction on every field change normalises a partially-entered vector and the next component is applied to that).
+  if (fill) { ['#ox', '#oy', '#oz'].forEach((s, k) => $(s).value = st.axis.p[k]); ['#dx', '#dy', '#dz'].forEach((s, k) => $(s).value = st.axis.d[k]); }
   $('#axis').value = [...$('#axis').options].some(o => o.value === src) ? src : 'C';
   axmsg(msg); update();
 }
 const axmsg = (m, bad) => { $('#axmsg').textContent = m; $('#axmsg').className = 'hint' + (bad ? ' bad' : ''); };
+const readComp = el => { if (el.validity.badInput || !String(el.value).trim()) return NaN; const v = Number(el.value); return Number.isFinite(v) ? v : NaN; };
 function typedAxis() {
-  const a = makeAxis(['#ox', '#oy', '#oz'].map(s => +$(s).value), ['#dx', '#dy', '#dz'].map(s => +$(s).value));
-  if (a.error) return axmsg(a.error, true);
+  const a = makeAxis(['#ox', '#oy', '#oz'].map(s => readComp($(s))), ['#dx', '#dy', '#dz'].map(s => readComp($(s))));
+  if (a.error) return axmsg(a.error, true); // keep the last valid axis; do not rewrite the boxes
   const src = Object.keys(PRESET).find(k => PRESET[k].every((v, i) => v === a.d[i])) || 'C';
-  setAxis(a, src, src === 'C' ? 'custom axis' : '');
+  setAxis(a, src, src === 'C' ? 'custom axis' : '', false);
 }
 function span(fr) {
   let lo = 1 / 0, hi = -1 / 0;
@@ -116,6 +119,7 @@ function update() {
   view.setTools(st.tools.filter(valid));
   const com = tot.m ? tot.M1.map(v => v / tot.m) : [0, 0, 0];
   view.setMarks(r1, fr, com, sp);
+  $('#dhat').textContent = `û (${st.axis.d.map(v => fmt(v, 5)).join(', ')})`;
   return { fr, base, r0, r1, sp };
 }
 
@@ -193,6 +197,8 @@ $('#panel').addEventListener('change', e => {
   if (card && el.dataset.free) { const t = st.tools[+card.dataset.i], k = el.dataset.free; t.free ??= {}; if (el.checked) t.free[k] = defBounds(k, t[k]); else delete t.free[k]; renderTools(); }
   if (card && (el.dataset.k === 'sign' || el.dataset.k === 'role')) { renderTools(); update(); }
 });
+$('#panel').addEventListener('focusout', e => { if (/^[od][xyz]$/.test(e.target.id)) typedAxis(); });
+$('#panel').addEventListener('keydown', e => { if (e.key === 'Enter' && /^[od][xyz]$/.test(e.target.id)) typedAxis(); });
 $('#panel').addEventListener('click', e => {
   const el = e.target, row = el.closest('#bodies tr[data-row]');
   if (row && !el.closest('input')) select(+row.dataset.row === st.sel ? -1 : +row.dataset.row, 'list');

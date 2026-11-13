@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { meshMoments, add, zero, rotate, translate, mul } from '../src/mass.js';
+import { readFileSync } from 'node:fs';
+import { meshMoments, add, zero, rotate, translate, mul, scale, KGM3, MESH as ACC } from '../src/mass.js';
+import { readDensities } from '../src/step-meta.js';
+import { buildBodies } from '../src/bodies.js';
 import { frame, imbalance, twoPlane, axisNames } from '../src/imbalance.js';
 import { makeTool, toolMoments, rotMat } from '../src/tools.js';
 import { optimize } from '../src/optimize.js';
@@ -100,4 +103,33 @@ test('optimiser balances about a tilted axis', () => {
   // the same physical solution as balancing the untilted rotor about Z (residual magnitudes are basis-free)
   const resZ = optimize(base0, [makeTool('sector', { name: 'cwA', ri: 31, ro: 40, a0: 0, sweep: 60, h: 3, z: 56 }), makeTool('sector', { name: 'cwB', ri: 31, ro: 40, a0: 0, sweep: 60, h: 3, z: -10 })].map((t, i) => ({ ...t, id: tools[i].id })), free, frame([0, 0, 0], [0, 0, 1]), { L: 66 });
   res.params.forEach((p, i) => close(p.value, resZ.params[i].value, 1e-3 * (p.hi - p.lo), p.key));
+});
+
+// M2 (QA GATE-69afba1): each change used to normalise the direction and write all three boxes back,
+// so typing a unit vector field by field (starting from the default 0,0,1) produced a different axis.
+test('M2: typing the axis direction field by field keeps the raw values and the intended residual', async () => {
+  const raw = [0.40558, -0.40558, 0.81915], p = [12, -7, 20];
+  // QA tilted two-body motion: 35° about (1,1,0)/√2, then translate to p. The unrotated residual is |U| = 108, |C| = 1532.6075394.
+  const k = [1 / Math.SQRT2, 1 / Math.SQRT2, 0], ang = 35 * Math.PI / 180, c = Math.cos(ang), s = Math.sin(ang), C = 1 - c, [x, y, z] = k;
+  const R = [c + x * x * C, x * y * C - z * s, x * z * C + y * s, y * x * C + z * s, c + y * y * C, y * z * C - x * s, z * x * C - y * s, z * y * C + x * s, c + z * z * C];
+  const boxes = [0, 0, 1]; let last;
+  for (let i = 0; i < 3; i++) {
+    boxes[i] = raw[i];
+    last = makeAxis(p, boxes);
+    assert.ok(!last.error, last.error);
+    assert.deepEqual(boxes, raw.map((v, k) => k <= i ? v : (k === 2 ? 1 : 0)), 'inputs are not rewritten after a change');
+  }
+  assert.deepEqual(boxes, raw);
+  assert.deepEqual(last.d, makeAxis(p, raw).d);
+  close(Math.hypot(...last.d), 1, 1e-15, '|d|');
+  // previous behaviour: rewrite the boxes with the unit vector after each change → 4.3° off after dy, |U| = 274.6 instead of 108
+  const bug = [0, 0, 1];
+  for (let i = 0; i < 3; i++) { bug[i] = raw[i]; const a = makeAxis(p, bug); bug[0] = a.d[0]; bug[1] = a.d[1]; bug[2] = a.d[2]; }
+  close(bug[0], 0.36047, 5e-5, 'buggy dx'); close(bug[1], -0.38899, 5e-5, 'buggy dy'); close(bug[2], 0.84779, 5e-5, 'buggy dz');
+  const stp = fix('qa-two-body-partial-density-ap242');
+  const bs = buildBodies(await readPasses(stp, ACC.accurate), readDensities(readFileSync(stp, 'latin1')), 7850, 'qa');
+  const mom = translate(rotate(bs.reduce((a, b) => add(a, scale(b.vol, b.sign * b.rho * KGM3)), zero()), R), p);
+  const good = imbalance(mom, frame(last.p, last.d)), bad = imbalance(mom, frame(p, bug));
+  close(good.Umag, 108, 0.01, '|U|'); close(good.Cmag, 1532.6, 0.1, '|C|');
+  close(bad.Umag, 274.6, 0.1, 'buggy |U|'); close(bad.Cmag, 2914, 1, 'buggy |C|');
 });

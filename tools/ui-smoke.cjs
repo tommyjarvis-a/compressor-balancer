@@ -60,9 +60,24 @@ const TILT = { rx: 25, ry: -10, rz: 15 }, O = [5, -3, 8];
       await p.mouse.click(h.x, h.y); await p.mouse.click(view.x + view.width - 30, view.y + 30); check('click empty space deselects', (await st()).sel === -1);
       // --- typed axis
       const typeAxis = async (o, d) => { for (const [k, v] of [['ox', o[0]], ['oy', o[1]], ['oz', o[2]], ['dx', d[0]], ['dy', d[1]], ['dz', d[2]]]) { await p.fill('#' + k, String(v)); await p.dispatchEvent('#' + k, 'change'); } };
-      await typeAxis([0, 0, 0], [0, 0, 0]); s = await st(); check('zero direction rejected', /non-zero/.test(s.msg) && s.axis.d.join() === '0,0,1', s.msg);
-      await typeAxis([1, 2, 3], [1, 0, 2]); s = await st();
-      check('typed axis normalised', Math.abs(s.axis.d[0] - 1 / Math.sqrt(5)) < 1e-9 && Math.abs(s.axis.d[2] - 2 / Math.sqrt(5)) < 1e-9 && s.axis.src === 'C' && (await p.inputValue('#axis')) === 'C', JSON.stringify(s.axis));
+      const fields = async ids => Object.fromEntries(await Promise.all(ids.map(async id => [id, await p.inputValue('#' + id)])));
+      await typeAxis([0, 0, 0], [0, 0, 0]); s = await st();
+      let inp = await fields(['dx', 'dy', 'dz']);
+      check('zero direction rejected', /non-zero/.test(s.msg) && s.axis.d.join() === '0,0,1' && inp.dx === '0' && inp.dy === '0' && inp.dz === '0', `${s.msg} boxes ${JSON.stringify(inp)}`);
+      await typeAxis([1, 2, 3], [1, 0, 2]); s = await st(); inp = await fields(['dx', 'dy', 'dz']);
+      check('typed axis normalised internally', Math.abs(s.axis.d[0] - 1 / Math.sqrt(5)) < 1e-9 && Math.abs(s.axis.d[2] - 2 / Math.sqrt(5)) < 1e-9 && s.axis.src === 'C' && (await p.inputValue('#axis')) === 'C', JSON.stringify(s.axis));
+      check('typed direction boxes kept as typed', inp.dx === '1' && inp.dy === '0' && inp.dz === '2', JSON.stringify(inp));
+      // M2: Tester's field-by-field unit vector (GATE-69afba1). Previously each change rewrote all three boxes, leaving d 4.3° off.
+      const raw = [0.40558, -0.40558, 0.81915], nraw = Math.hypot(...raw), prec = v => +(+v).toPrecision(10);
+      await typeAxis([12, -7, 20], raw); s = await st(); inp = await fields(['ox', 'oy', 'oz', 'dx', 'dy', 'dz']);
+      const kept = [inp.ox, inp.oy, inp.oz].map(Number).every((v, i) => v === [12, -7, 20][i]) && [inp.dx, inp.dy, inp.dz].map(Number).every((v, i) => v === raw[i]);
+      const want = raw.map(v => prec(v / nraw)), onRaw = want.every((v, i) => s.axis.d[i] === v);
+      check('M2 field-by-field direction not rewritten, axis is the unit of the typed values', kept && onRaw && s.axis.src === 'C', JSON.stringify({ inp, d: s.axis.d }));
+      check('unit direction readout', /û/.test(await p.textContent('#dhat')));
+      const keptD = s.axis.d.slice();
+      await p.evaluate(() => { const el = document.getElementById('dx'); el.value = ''; el.dispatchEvent(new Event('change', { bubbles: true })); });
+      s = await st(); inp = await fields(['dx', 'dy', 'dz']);
+      check('non-numeric direction rejected, last axis kept', /numbers/.test(s.msg) && s.axis.d.every((v, i) => v === keptD[i]) && inp.dx === '', `${s.msg} ${JSON.stringify({ inp, d: s.axis.d })}`);
       // --- picking: cylinder face (rotor outer surface)
       await p.click('[data-pick="cyl"]'); h = await find('rotor', ring(30, 20)); await p.mouse.click(h.x, h.y); s = await st();
       const off = sub(s.axis.p, O), perp = Math.hypot(...sub(off, W.map(v => v * dot(off, W))));

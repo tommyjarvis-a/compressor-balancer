@@ -26,7 +26,7 @@
     <div class="row"><label>Axis <select id="axis"></select></label>
       <span class="picks" title="Pick the spin axis in the 3-D view">Pick <button data-pick="cyl">cylinder</button><button data-pick="loop">circle edge</button><button data-pick="pts">2 points</button></span></div>
     <div class="row axin"><label title="A point on the spin axis (world mm); axial positions are measured from it">Point <input id="ox" type="number" value="0" step="any"><input id="oy" type="number" value="0" step="any"><input id="oz" type="number" value="0" step="any"></label>
-      <label title="Axis direction (world; normalised)">Dir <input id="dx" type="number" value="0" step="any"><input id="dy" type="number" value="0" step="any"><input id="dz" type="number" value="1" step="any"></label></div>
+      <label title="Axis direction (world). Applied as a unit vector; the boxes keep the values as typed.">Dir <input id="dx" type="number" value="0" step="any"><input id="dy" type="number" value="0" step="any"><input id="dz" type="number" value="1" step="any"> <span id="dhat" class="hint" title="Unit direction used for computation"></span></label></div>
     <div id="axmsg" class="hint"></div>
     <div id="resid" class="resid"></div>
   </section>
