@@ -45,11 +45,13 @@ Plain ES modules, no framework, no build step. Files never leave the browser.
      An inline message is shown if nothing is selected or the net mass is zero or negative. The result is **not**
      recalculated automatically: if the selection, a density, or the body set changes, the readout and marker are
      marked *stale* until you click *Calculate CG* again. Loading a file or session never clears that flag — only
-     a successful *Calculate CG* does. The result is included in the JSON and CSV exports and in a saved session.
+     a successful *Calculate CG* does. The result is included in the JSON and CSV exports and in a saved session
+     (the `stale` flag is written truthfully, including after a later density, selection or body-set change).
      On reload, bodies are matched by sign (`REMOVE_*` vs a positive body), by unique base name (the name without
      a ` #n` suffix), and otherwise by volume + bbox fingerprint among same-name, same-sign candidates. The saved
-     CG numbers are kept only on an exact full match; otherwise they are dropped, the result is marked stale and
-     a notice is shown. Unmatched bodies are left untouched.
+     CG is restored as current only if it was not stale when exported (a missing flag in an older session is
+     treated as stale) and every saved body matches exactly with the same body count. Otherwise the numbers are
+     kept but marked stale, or dropped, and a notice is shown. Unmatched bodies are left untouched.
 3. **Spin axis** = a **point + direction** (world mm). Set it by
    - a preset: world X/Y/Z through the point (default Z through 0,0,0), or a body's principal axis (the
      eigenvector whose principal moment is most distinct, i.e. the symmetry axis of a shaft/rotor, through its CoM);
@@ -154,7 +156,7 @@ optimiser about a tilted axis, M2 field-by-field direction entry (boxes not rewr
 multi-body fixture including a `REMOVE_*` solid and a subset selection (vs closed form and optional OpenCascade
 `BRepGProp`), unique display-name suffixes, and session restore by sign, unique base name, and volume/bbox
 fingerprint (duplicate names, reordered or mismatched sets, `REMOVE_` twins, cross-file / changed body counts,
-legacy name-only sessions). Synthetic fixture `cg-assembly.stp`.
+legacy name-only sessions, a stale or flag-less CG restore). Synthetic fixture `cg-assembly.stp`.
 
 Browser responsiveness: `tools/browser-smoke.cjs` imports the fixtures (or given files) in Chromium and WebKit via
 Playwright and fails if any animation frame gap exceeds 1.5 s or the import takes longer than 60 s.
@@ -164,7 +166,7 @@ Esc, empty space, Ctrl-click multi-select), Calculate CG (no-selection message, 
 selection/density change, dashed line from the origin), typed axis
 (fields kept as typed, M2 field-by-field unit vector, zero / non-numeric rejection, unit readout), picking
 (cylinder, circle edge, 2 points), the optimiser about a tilted axis and JSON/CSV export + session reload
-(including assembly CG), on `test/fixtures/tilted-rotor.stp`.
+(including a current, a stale-after-density, a legacy and an other-file assembly-CG restore), on `test/fixtures/tilted-rotor.stp`.
 Both accept `BROWSERS=chromium,webkit,msedge` (msedge = installed Microsoft Edge).
 
 ## Size, dependencies, token/code efficiency
@@ -184,7 +186,7 @@ Both accept `BROWSERS=chromium,webkit,msedge` (msedge = installed Microsoft Edge
 - One small module per concern (`mass`, `imbalance`, `tools`, `nm`, `optimize`, `step-export`, `step-meta`, `fit`, `view`,
   `app`) to keep future edits and reviews cheap.
 
-## Limitations (0.1.7-alpha)
+## Limitations (0.1.8-alpha)
 
 - Very large assemblies are meshed coarser to fit the triangle budget (warning shown); a single OCCT call cannot be
   interrupted except by Cancel/timeout, which discards that file.

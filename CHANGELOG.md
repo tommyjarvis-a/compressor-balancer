@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.8-alpha — 2026-11-13
+
+- **Fix (High, H3):** a session exported while the assembly CG was stale no longer restores that CG as current.
+  A restored CG is current only if the saved CG was not stale *and* every saved body matches exactly with the
+  same body count. A missing `stale` flag in an older session is treated as stale. In every other case the
+  numbers are kept but marked stale, or dropped, and a notice is shown. `touchCG` / load completion still cannot
+  clear the flag; only a successful *Calculate CG* does.
+- Export writes `assemblyCG.stale` (and the CSV stale row) from the live flag, including after a density,
+  selection or body-set change made after *Calculate CG*. Re-export after restore round-trips the flag.
+- An extra hole found in the restore sweep: a same-count body-set change (for example a `REMOVE_` twin in
+  place of a positive body) could previously look like an exact match because the CG subset still mapped and
+  the counts were equal. The whole session body list must now match for the CG to be current.
+- Tests: generated 48-case restore/stale matrix (saved current / stale / legacy × same or other file × body
+  count changed or not × `REMOVE_` twin or not × density edit or not), plus the Tester case D repro and
+  truthful-export checks (48 Node tests incl. the optional OCP check). `tools/ui-smoke.cjs` covers a headed
+  subset: current same-file restore, stale-after-density restore, a legacy session with no flag, and an
+  other-file drop.
+
+
 ## 0.1.7-alpha — 2026-11-13
 
 - **Fix (High, H2):** finishing a file load no longer clears a stale assembly-CG flag. `touchCG()` can only *set*
