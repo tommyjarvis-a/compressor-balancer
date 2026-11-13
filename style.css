@@ -1,0 +1,13 @@
+*{box-sizing:border-box}html,body{margin:0;height:100%;font:13px/1.4 system-ui,sans-serif;color:#1d2330;background:#f4f5f7}
+header{height:38px;display:flex;gap:10px;align-items:center;padding:0 12px;background:#1d2330;color:#fff}header small{opacity:.6}#status{margin-left:auto;opacity:.85}
+main{display:flex;height:calc(100% - 38px)}#panel{width:400px;overflow:auto;padding:8px 10px;background:#fff;border-right:1px solid #ddd}#view{flex:1;position:relative;min-height:300px}
+h2{font-size:13px;margin:10px 0 6px;color:#465}section{border-bottom:1px solid #eee;padding-bottom:8px}
+.drop{display:block;border:2px dashed #9ab;border-radius:6px;padding:14px;text-align:center;cursor:pointer;color:#567}.drop.over{background:#eef6ff;border-color:#36c}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}input[type=number]{width:64px}input,select,button,textarea{font:inherit}
+button{padding:4px 9px;border:1px solid #bbc;border-radius:4px;background:#f8f9fb;cursor:pointer}button.primary{background:#2a62c9;color:#fff;border-color:#2a62c9}button:disabled{opacity:.5}
+table{width:100%;border-collapse:collapse}td,th{padding:2px 4px;text-align:left;border-bottom:1px solid #f0f0f0}td input[type=number]{width:70px}.src{font-size:11px;color:#789}
+.resid{font-variant-numeric:tabular-nums;display:grid;grid-template-columns:auto 1fr 1fr 1fr;gap:1px 8px}.resid b{font-weight:600}.big{font-size:15px}.ok{color:#18794e}.bad{color:#b4232c}
+.tool{border:1px solid #dde;border-radius:6px;padding:6px;margin:6px 0}.tool .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:3px 8px}.tool label.f{grid-column:1/-1}.tool label{display:flex;gap:4px;align-items:center}.tool label span{width:34px;color:#567}
+.tool .free{display:flex;gap:2px}.tool .free input[type=number]{width:52px}.tool textarea{width:100%;height:38px}.hint{color:#789;margin:2px 0}footer{font-size:11px;color:#789;padding:8px 0}
+#optout table td{font-variant-numeric:tabular-nums}
+@media (max-width:760px){main{flex-direction:column-reverse;height:auto}#panel{width:100%;border:0}#view{height:55vh;flex:none}}
