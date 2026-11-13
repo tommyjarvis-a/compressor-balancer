@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { uniqueNames, bodyRef, asSaved, matchBodies, fingerprintMatch, FINGERPRINT } from '../src/bodies.js';
+import { uniqueNames, bodyRef, asSaved, matchBodies, fingerprintMatch, FINGERPRINT, baseName, restoreCG, holdStale } from '../src/bodies.js';
 
 const box = (name, vol, bbox, extra = {}) => ({ name, vol: { m: vol }, bbox, sign: 1, rho: 7850, file: 'dup.stp', ...extra });
 // Three distinct solids that could all be named the same (the test.stp situation).
@@ -83,4 +83,98 @@ test('fingerprint tolerances: a tiny volume/bbox change still matches; a large o
   const b = A, close = { ...A, vol: { m: A.vol.m * (1 + FINGERPRINT.vol * 0.1) }, bbox: A.bbox.map((v, i) => v + (i < 3 ? -0.001 : 0.001)) };
   assert.equal(fingerprintMatch(bodyRef(b, 0), close), true);
   assert.equal(fingerprintMatch(bodyRef(b, 0), { ...A, vol: { m: A.vol.m * 1.5 } }), false);
+});
+
+test('M6: a REMOVE_ twin with the same volume and bbox is not matched', () => {
+  const shaft = box('shaft', 100, [0, 0, 0, 2, 2, 10]);
+  const pocket = box('REMOVE_pocket', 20, [0, 0, 4, 1, 1, 6], { sign: -1 });
+  const slug = box('slug', 50, [3, 0, 0, 8, 5, 5], { rho: 2700 });
+  const remSlug = box('REMOVE_slug', 50, [3, 0, 0, 8, 5, 5], { sign: -1 });
+  // 4-body session (slug at index 2 with ρ 2700) loaded onto the 3-body file without slug
+  const saved = [shaft, pocket, slug, remSlug].map((b, i) => ({ ...bodyRef(b, i), rho: b.rho }));
+  const current = [shaft, pocket, remSlug];
+  const m = matchBodies(saved, current);
+  assert.deepEqual(m.map, [0, 1, -1, 2], JSON.stringify(m));
+  assert.equal(m.stale, true);
+  assert.ok(m.unmatched.includes(2));
+  // the 2700 must not be considered a match for REMOVE_slug
+  assert.equal(fingerprintMatch(saved[2], remSlug), false);
+  assert.equal(fingerprintMatch(saved[3], remSlug), true);
+});
+
+test('M6: adding or removing a body leaves unmatched records untouched; CG is stale with a notice', () => {
+  const current = uniqueNames([A, B].map(b => ({ ...b }))); // C removed
+  const saved = [A, B, C].map((b, i) => bodyRef({ ...b, name: 'part' }, i));
+  const m = matchBodies(saved, current);
+  assert.deepEqual(m.map, [0, 1, -1]);
+  assert.equal(m.stale, true);
+  assert.match(m.notice, /no fingerprint match|no body matching/);
+  const rest = restoreCG(m, { c: [1, 2, 3], mass: 99 }, { saved: 3, current: 2 });
+  assert.equal(rest.keep, false);
+  assert.equal(rest.dropped, true);
+  assert.equal(rest.stale, true);
+  assert.deepEqual(rest.sels, [0, 1]); // partial selection kept
+  assert.equal(rest.c, null);
+  // adding a body: saved A,B onto A,B,C — extra current body is untouched; CG is stale because the set changed
+  const cur3 = uniqueNames([A, B, C].map(b => ({ ...b })));
+  const add = matchBodies([A, B].map((b, i) => bodyRef({ ...b, name: 'part' }, i)), cur3);
+  assert.deepEqual(add.map, [0, 1]);
+  assert.equal(add.stale, false); // all saved records matched; the extra body is simply untouched
+  const addCG = restoreCG(add, { c: [1, 2, 3], mass: 99 }, { saved: 2, current: 3 });
+  assert.equal(addCG.keep, false);
+  assert.equal(addCG.stale, true);
+  assert.match(addCG.notice, /body count changed/);
+});
+
+test('M6: a unique base name blocks a fingerprint match to a different name', () => {
+  const shaft = box('shaft', 1000, [0, 0, 0, 10, 10, 10]);
+  const other = box('rotor', 1000, [0, 0, 0, 10, 10, 10]); // same fingerprint, unique other name
+  const m = matchBodies([bodyRef(shaft, 0)], [other]);
+  assert.deepEqual(m.map, [-1]);
+  assert.equal(m.stale, true);
+  assert.equal(baseName('test.stp #3'), 'test.stp');
+  assert.equal(baseName('shaft'), 'shaft');
+  // unique names that agree still match
+  const ok = matchBodies([bodyRef(shaft, 0)], [shaft]);
+  assert.deepEqual(ok.map, [0]);
+  assert.equal(ok.stale, false);
+});
+
+test('H2: after a mismatched restore, holdStale does not clear the flag (load completion)', () => {
+  const current = [box('shaft', 10, [0, 0, 0, 1, 1, 1]), box('rotor', 20, [2, 0, 0, 3, 1, 1])];
+  const foreign = [box('test.stp #1', 100, [0, 0, 0, 10, 10, 10]), box('test.stp #2', 200, [10, 0, 0, 20, 5, 5])];
+  const m = matchBodies(foreign.map((b, i) => bodyRef(b, i)), current);
+  assert.equal(m.stale, true);
+  const rest = restoreCG(m, { c: [-0.085, -0.402, 73.512], mass: 1161.399 });
+  assert.equal(rest.keep, false);
+  assert.equal(rest.dropped, true);
+  assert.equal(rest.c, null);
+  // simulate loadSession then loadFiles → update → touchCG, with a key that now matches the (empty) selection
+  const key = rest.sels.map(String).join(',') + '#' + current.length;
+  const cg = { dropped: true, stale: true, notice: rest.notice, key, c: rest.c, m: rest.m };
+  const after = holdStale(cg, key);
+  assert.equal(after.stale, true, 'touchCG must not clear stale when the key still matches');
+  assert.equal(after.dropped, true);
+  // a later selection change may also mark stale, but still must not invent a current result
+  const later = holdStale(after, '0:shaft:7850:1:10#2');
+  assert.equal(later.stale, true);
+});
+
+test('H2: a cross-file session leaves the CG dropped and stale; only calc-style reset clears it', () => {
+  const fixture = [box('shaft', 11300, [0, 0, 0, 12, 12, 120]), box('rotor', 1e5, [-30, -30, 0, 30, 30, 40])];
+  const teststp = Array.from({ length: 9 }, (_, i) => box('test.stp #' + (i + 1), 1000 + i * 100, [i, 0, 0, i + 1, 10, 10]));
+  const m = matchBodies(teststp.map((b, i) => bodyRef(b, i)), fixture);
+  assert.ok(m.map.every(i => i < 0));
+  const rest = restoreCG(m, { c: [0.65, 0.66, 56.86], mass: 1656 });
+  assert.equal(rest.keep, false);
+  assert.equal(rest.stale, true);
+  assert.equal(rest.dropped, true);
+  const kept = restoreCG({ map: [0, 1], stale: false, notice: '' }, { c: [1, 2, 3], mass: 50 });
+  assert.equal(kept.keep, true);
+  assert.equal(kept.stale, false);
+  assert.deepEqual(kept.c, [1, 2, 3]);
+  // the only way stale becomes false is a successful Calculate CG (caller sets stale: false)
+  const fresh = { ...kept, key: 'ok', stale: false, dropped: false };
+  assert.equal(holdStale(fresh, 'ok').stale, false);
+  assert.equal(holdStale({ ...fresh, stale: true }, 'ok').stale, true);
 });
