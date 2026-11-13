@@ -13,6 +13,8 @@ Plain ES modules, no framework, no build step. Files never leave the browser.
 1. Open the page (GitHub Pages, or any static server: `python3 -m http.server` in the repo root — opening
    `index.html` via `file://` does not work because browsers block module/WASM loads there).
 2. **Import**: drop one or more `.stp/.step` files (or click *browse*). Each solid body becomes a row.
+   Duplicate display names (common when a STEP file has one product and several solids) are shown as
+   `name #1`…`#n`; unique names are left as they are.
    - Density is taken from the STEP file when a density record belongs to that body's product (tag *STEP*). A
      file-wide value is used only if no record matches any body and the file has a single density (tag
      *STEP (file)*). Otherwise the *Default* preset
@@ -43,7 +45,9 @@ Plain ES modules, no framework, no build step. Files never leave the browser.
      An inline message is shown if nothing is selected or the net mass is zero or negative. The result is **not**
      recalculated automatically: if the selection, a density, or the body set changes, the readout and marker are
      marked *stale* until you click *Calculate CG* again. The result is included in the JSON and CSV exports and
-     in a saved session.
+     in a saved session. On reload, bodies are matched by index plus a volume and bounding-box fingerprint (the
+     name is only a hint). If a match is ambiguous or missing, that body's settings are left untouched, the CG is
+     marked stale and a notice is shown.
 3. **Spin axis** = a **point + direction** (world mm). Set it by
    - a preset: world X/Y/Z through the point (default Z through 0,0,0), or a body's principal axis (the
      eigenvector whose principal moment is most distinct, i.e. the symmetry axis of a shaft/rotor, through its CoM);
@@ -68,9 +72,9 @@ Plain ES modules, no framework, no build step. Files never leave the browser.
    - 3D view: red ball = residual CoM of the enabled bodies + tools, black line = spin axis, red arrow = static
      imbalance direction, blue arrows = couple (as an opposed pair at two planes). Arrow length is log-scaled;
      arrows disappear when the residual is ~0. A small RGB (X/Y/Z) triad with an "Origin 0,0,0" label sits at the
-     model-space origin, constant size on screen and drawn through geometry; it is separate from the lower-left
-     WCS inset triad and from the gold assembly-CG marker. A dashed line runs from the origin to the assembly CG
-     while one is shown.
+     model-space origin, constant size on screen and drawn through geometry (an overlay pass, so the markers
+     stay visible inside a part); it is separate from the lower-left WCS inset triad and from the gold
+     assembly-CG marker. A dashed line runs from the origin to the assembly CG while one is shown.
 4. **Correction tools**: *Sector* (annular sector: ri, ro, start angle a0, sweep), *Cylinder* (r, optional bore ri),
    *Profile* (extruded polygon, local `x,y; x,y; …` in mm, with a scale). All are extruded along their local +Z by h,
    rotated by rx→ry→rz (R = Rz·Ry·Rx, degrees) and placed at x, y, z. Each tool has its own ρ, a role
@@ -146,13 +150,15 @@ Also: mesh closure check (T-junction / sliver / missing face), error-gated coars
 axis vs the geometry rotated onto Z, cylinder and edge-loop fits on a tilted fixture (plus rejection cases),
 optimiser about a tilted axis, M2 field-by-field direction entry (boxes not rewritten, |U| ≈ 108), assembly CG of a
 multi-body fixture including a `REMOVE_*` solid and a subset selection (vs closed form and optional OpenCascade
-`BRepGProp`). Synthetic fixture `cg-assembly.stp`.
+`BRepGProp`), unique display-name suffixes, and session restore by index + volume/bbox fingerprint (duplicate
+names, reordered or mismatched sets, legacy name-only sessions). Synthetic fixture `cg-assembly.stp`.
 
 Browser responsiveness: `tools/browser-smoke.cjs` imports the fixtures (or given files) in Chromium and WebKit via
 Playwright and fails if any animation frame gap exceeds 1.5 s or the import takes longer than 60 s.
 UI: `HEADED=1 node tools/ui-smoke.cjs [url]` checks the triad (pixels, follows orbit, resize), the model-space
-origin marker, selection (view ⇄ list, drag ≠ click, Esc, empty space, Ctrl-click multi-select), Calculate CG
-(no-selection message, marker, stale on selection/density change, dashed line from the origin), typed axis
+origin marker (overlay flags and RGB pixels drawn on top of the parts), selection (view ⇄ list, drag ≠ click,
+Esc, empty space, Ctrl-click multi-select), Calculate CG (no-selection message, gold marker pixels, stale on
+selection/density change, dashed line from the origin), typed axis
 (fields kept as typed, M2 field-by-field unit vector, zero / non-numeric rejection, unit readout), picking
 (cylinder, circle edge, 2 points), the optimiser about a tilted axis and JSON/CSV export + session reload
 (including assembly CG), on `test/fixtures/tilted-rotor.stp`.
@@ -175,7 +181,7 @@ Both accept `BROWSERS=chromium,webkit,msedge` (msedge = installed Microsoft Edge
 - One small module per concern (`mass`, `imbalance`, `tools`, `nm`, `optimize`, `step-export`, `step-meta`, `fit`, `view`,
   `app`) to keep future edits and reviews cheap.
 
-## Limitations (0.1.5-alpha)
+## Limitations (0.1.6-alpha)
 
 - Very large assemblies are meshed coarser to fit the triangle budget (warning shown); a single OCCT call cannot be
   interrupted except by Cancel/timeout, which discards that file.

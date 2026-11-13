@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.6-alpha — 2026-11-13
+
+- **Fix (Medium, M3):** the gold assembly-CG marker, the RGB origin arrows and the dashed origin-to-CG line
+  were hidden by the (transparent) body meshes; only the DOM labels showed through. They now render in an
+  overlay pass after a depth clear (`depthTest`/`depthWrite` off, `transparent`, high `renderOrder`), so they
+  stay a constant size on screen and draw on top of the parts.
+- **Fix (Medium, M4):** session restore no longer matches bodies by name alone. Densities, on/off flags and the
+  saved assembly-CG selection are keyed by body index plus a volume + bbox fingerprint (relative tolerance
+  1e-3); the name is only a hint when fingerprints collide. If a body is ambiguous or does not match, it is
+  left untouched, the CG is marked stale, and a notice is shown. 0.1.x sessions with unique names still load.
+- **L7:** duplicate display names (e.g. a single-product NX file whose solids all inherit the file name) are
+  numbered `name #1`…`#n`. Unique names are unchanged. The same names are used in the list, exports and session.
+- Tests: unique-name suffixes; fingerprint match with duplicate names, a reordered set, a mismatch, identical
+  twins and a legacy name-only session (40 Node tests incl. the optional OCP check); `tools/ui-smoke.cjs`
+  checks the overlay material flags and that gold / RGB marker pixels are visible.
+
+
 ## 0.1.5-alpha — 2026-11-13
 
 - **Assembly CG**: *Calculate CG* next to the body list computes the mass-weighted combined centre of gravity of
