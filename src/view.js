@@ -3,9 +3,9 @@ import { Scene, PerspectiveCamera, OrthographicCamera, WebGLRenderer, Hemisphere
   Sprite, SpriteMaterial, CanvasTexture, OrbitControls } from '../vendor/three/three.lite.min.js';
 import { loops } from './tools.js';
 // Thin Three.js layer: bodies (pickable, multi-select), correction tools, CoM marker, assembly-CG marker
-// (gold, constant screen size, shows through geometry), a model-space origin marker at 0,0,0 (RGB axes,
-// constant screen size, distinct from the CG), spin axis, imbalance arrows, and a world-axes triad
-// drawn in a lower-left inset (second render pass with a scissor).
+// and model-space origin (constant screen size). Origin, CG and the origin-to-CG line live in an overlay
+// scene rendered after a depth clear so they draw through the (transparent) bodies. Spin axis, imbalance
+// arrows, and a world-axes triad in a lower-left inset (scissor pass).
 const TRIAD = 110, CLICK_PX = 5; // inset size (CSS px); pointer travel that still counts as a click, not an orbit
 export function createView(el) {
   const scene = new Scene(); scene.background = new Color(0xeef0f3);
@@ -13,7 +13,8 @@ export function createView(el) {
   const ren = new WebGLRenderer({ antialias: true }); el.appendChild(ren.domElement);
   const ctl = new OrbitControls(cam, ren.domElement);
   scene.add(new HemisphereLight(0xffffff, 0x8899aa, 2.2)); const sun = new DirectionalLight(0xffffff, 1.6); sun.position.set(1, -1, 2); scene.add(sun);
-  const bodies = new Group(), tools = new Group(), marks = new Group(), picks = new Group(), cgGrp = new Group(), originGrp = new Group(), cgLine = new Group(); scene.add(bodies, tools, marks, picks, cgGrp, originGrp, cgLine);
+  const bodies = new Group(), tools = new Group(), marks = new Group(), picks = new Group(), cgGrp = new Group(), originGrp = new Group(), cgLine = new Group();
+  const overlay = new Scene(); scene.add(bodies, tools, marks, picks); overlay.add(cgGrp, originGrp, cgLine);
   const triad = makeTriad(), tcam = new OrthographicCamera(-1.45, 1.45, 1.45, -1.45, 0.1, 10);
   let mq;
   const resize = () => { // also on devicePixelRatio changes (browser zoom, moving to another screen) so both passes stay crisp
@@ -41,8 +42,10 @@ export function createView(el) {
   ren.setAnimationLoop(() => {
     ctl.update(); syncMarks(); const w = el.clientWidth, h = el.clientHeight;
     ren.setViewport(0, 0, w, h); ren.render(scene, cam);
+    // M3: overlay pass after a depth clear so CG / origin / dashed line are not painted over by transparent bodies
+    ren.autoClear = false; ren.clearDepth(); ren.render(overlay, cam);
     tcam.position.copy(cam.position).sub(ctl.target).setLength(4); tcam.up.copy(cam.up); tcam.lookAt(0, 0, 0);
-    ren.autoClear = false; ren.clearDepth(); ren.setScissorTest(true); ren.setScissor(0, 0, TRIAD, TRIAD); ren.setViewport(0, 0, TRIAD, TRIAD);
+    ren.clearDepth(); ren.setScissorTest(true); ren.setScissor(0, 0, TRIAD, TRIAD); ren.setViewport(0, 0, TRIAD, TRIAD);
     ren.render(triad, tcam); ren.setScissorTest(false); ren.autoClear = true;
   });
   const clear = g => { for (const c of [...g.children]) { g.remove(c); c.traverse(o => { o.geometry?.dispose(); o.material?.dispose?.(); }); } };
@@ -110,7 +113,7 @@ export function createView(el) {
     setAssemblyCG(c, stale = false) {
       clear(cgGrp); clear(cgLine); cgRoot = null; cgLabel.hidden = true;
       if (!c) return;
-      const g = new Group(), mat = (col) => new MeshBasicMaterial({ color: col, depthTest: false, depthWrite: false });
+      const g = new Group(), mat = (col) => new MeshBasicMaterial({ color: col, depthTest: false, depthWrite: false, transparent: true });
       const halo = new Mesh(new SphereGeometry(11, 20, 16), mat(0x1d2330)), ball = new Mesh(new SphereGeometry(8, 20, 16), mat(stale ? 0xb89a00 : 0xffcc00));
       halo.renderOrder = 20; ball.renderOrder = 21; g.add(halo, ball);
       const up = new Vector3(0, 1, 0);
@@ -126,6 +129,12 @@ export function createView(el) {
     hasAssemblyCG: () => !!cgRoot,
     hasOrigin: () => true,
     hasOriginToCG: () => cgLine.children.length > 0,
+    // for tests: confirm the overlay pass and that marker materials will not be hidden by transparent bodies
+    markerOverlay() {
+      const mats = [];
+      overlay.traverse(o => { const m = o.material; if (m) mats.push({ depthTest: !!m.depthTest, depthWrite: !!m.depthWrite, transparent: !!m.transparent, renderOrder: o.renderOrder }); });
+      return { pass: 'overlay', count: mats.length, mats };
+    },
     onClick(f) { onClick = f; },
     project(p) { const v = new Vector3(...p).project(cam), r = ren.domElement.getBoundingClientRect(); return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height]; },
     pick, cursor(c) { ren.domElement.style.cursor = c; },
@@ -152,10 +161,10 @@ function makeTriad() {
 // Model-space origin at 0,0,0: small RGB arrows (same colours as the inset triad), sized in CSS pixels.
 function makeOriginAxes() {
   const g = new Group(), up = new Vector3(0, 1, 0);
-  const hub = new Mesh(new SphereGeometry(3, 12, 8), new MeshBasicMaterial({ color: 0x1d2330, depthTest: false, depthWrite: false }));
+  const hub = new Mesh(new SphereGeometry(3, 12, 8), new MeshBasicMaterial({ color: 0x1d2330, depthTest: false, depthWrite: false, transparent: true }));
   hub.renderOrder = 15; g.add(hub);
   [[0xd0343c, [1, 0, 0]], [0x2b9a46, [0, 1, 0]], [0x2a62c9, [0, 0, 1]]].forEach(([col, dir]) => {
-    const mat = new MeshBasicMaterial({ color: col, depthTest: false, depthWrite: false }), d = new Vector3(...dir);
+    const mat = new MeshBasicMaterial({ color: col, depthTest: false, depthWrite: false, transparent: true }), d = new Vector3(...dir);
     const shaft = new Mesh(new CylinderGeometry(1.2, 1.2, 20, 8), mat), cone = new Mesh(new ConeGeometry(3.2, 8, 10), mat);
     shaft.quaternion.setFromUnitVectors(up, d); shaft.position.copy(d).multiplyScalar(10);
     cone.quaternion.setFromUnitVectors(up, d); cone.position.copy(d).multiplyScalar(24);
@@ -168,7 +177,7 @@ function dashLine(a, b, col) {
   const g = new Group(), len = Math.hypot(...b.map((v, i) => v - a[i]));
   if (!(len > 1e-9)) return g;
   const n = Math.max(8, Math.min(36, Math.round(len / 6))), dash = len / (n * 2), dir = b.map((v, i) => (v - a[i]) / len);
-  const mat = new LineBasicMaterial({ color: col, depthTest: false, depthWrite: false });
+  const mat = new LineBasicMaterial({ color: col, depthTest: false, depthWrite: false, transparent: true });
   for (let i = 0; i < n; i++) {
     const t0 = i * 2 * dash, t1 = t0 + dash;
     const ln = new Line(new BufferGeometry().setFromPoints([new Vector3(...a.map((v, k) => v + dir[k] * t0)), new Vector3(...a.map((v, k) => v + dir[k] * t1))]), mat);
