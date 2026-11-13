@@ -30,8 +30,9 @@ const TILT = { rx: 25, ry: -10, rz: 15 }, O = [5, -3, 8];
       await p.waitForFunction(() => / bodies ·/.test(document.querySelector('#status').textContent), null, { timeout: 60000 });
       const names = (await st()).names, iRotor = names.indexOf('rotor'), iShaft = names.indexOf('shaft');
       const view = await p.locator('#view canvas').boundingBox();
-      const origin = await p.evaluate(() => ({ has: rab.view.hasOrigin(), text: document.querySelector('#originmark')?.textContent, hidden: !!document.querySelector('#originmark')?.hidden, line: rab.view.hasOriginToCG() }));
-      check('model-space origin marker at 0,0,0 (label, not the inset triad)', origin.has && /Origin 0,0,0/.test(origin.text || '') && !origin.line, JSON.stringify(origin));
+      const origin = await p.evaluate(() => ({ has: rab.view.hasOrigin(), text: document.querySelector('#originmark')?.textContent, hidden: !!document.querySelector('#originmark')?.hidden, line: rab.view.hasOriginToCG(), ov: rab.view.markerOverlay() }));
+      check('model-space origin marker at 0,0,0 (label, not the inset triad)', origin.has && /Origin 0,0,0/.test(origin.text || '') && !origin.line, JSON.stringify({ has: origin.has, text: origin.text, hidden: origin.hidden }));
+      check('origin/CG overlay pass draws on top (depthTest/depthWrite off)', origin.ov.pass === 'overlay' && origin.ov.mats.length > 0 && origin.ov.mats.every(m => m.depthTest === false && m.depthWrite === false), JSON.stringify(origin.ov));
       // --- triad: red/green/blue pixels in the lower-left inset, follows the camera, survives resize
       const colours = async () => { const box = await p.locator('#view canvas').boundingBox(), px = await p.evaluate(() => rab.view.triadPx);
         const png = await p.screenshot({ clip: { x: box.x, y: box.y + box.height - px, width: px, height: px } });
@@ -76,6 +77,30 @@ const TILT = { rx: 25, ry: -10, rz: 15 }, O = [5, -3, 8];
       check('assembly CG marker is visible (3-D + on-screen label)', cg.mark && cg.has, JSON.stringify({ mark: cg.mark, has: cg.has }));
       const cgLine = await p.evaluate(() => ({ line: rab.view.hasOriginToCG(), origin: rab.view.hasOrigin(), originText: document.querySelector('#originmark')?.textContent }));
       check('dashed line from origin to CG; origin marker still present', cgLine.line && cgLine.origin && /Origin 0,0,0/.test(cgLine.originText || ''), JSON.stringify(cgLine));
+      const ov2 = await p.evaluate(() => rab.view.markerOverlay());
+      check('CG marker is also on the overlay pass', ov2.pass === 'overlay' && ov2.mats.length > origin.ov.mats.length && ov2.mats.every(m => m.depthTest === false && m.depthWrite === false), `mats ${ov2.count}`);
+      // M3: gold / RGB pixels must be visible at the projected CG and origin (not covered by the bodies)
+      const countColours = async world => {
+        const loc = await p.evaluate(q => { const [x, y] = rab.view.project(q), box = document.querySelector('#view canvas').getBoundingClientRect(); return { x, y, bx: box.x, by: box.y }; }, world);
+        const rpx = 22, clip = { x: loc.x - rpx, y: loc.y - rpx, width: rpx * 2, height: rpx * 2 };
+        const png = await p.screenshot({ clip });
+        return p.evaluate(async b64 => {
+          const im = new Image(); im.src = 'data:image/png;base64,' + b64; await im.decode();
+          const c = document.createElement('canvas'); c.width = im.width; c.height = im.height;
+          const g = c.getContext('2d'); g.drawImage(im, 0, 0); const d = g.getImageData(0, 0, c.width, c.height).data, n = { gold: 0, red: 0, green: 0, blue: 0 };
+          for (let i = 0; i < d.length; i += 4) {
+            const [r, gg, bb] = [d[i], d[i + 1], d[i + 2]];
+            if (r > 200 && gg > 160 && bb < 80) n.gold++;
+            else if (r > 170 && gg < 90 && bb < 90) n.red++;
+            else if (gg > 120 && r < 90 && bb < 110) n.green++;
+            else if (bb > 160 && r < 90 && gg < 140) n.blue++;
+          }
+          return n;
+        }, png.toString('base64'));
+      };
+      const cgPos = cg.c || await p.evaluate(() => rab.st.cg.c), gold = await countColours(cgPos), rgb = await countColours([0, 0, 0]);
+      check('gold CG marker pixels visible through / on top of the parts', gold.gold > 20, JSON.stringify(gold));
+      check('RGB origin arrows visible through / on top of the parts', rgb.red > 10 && rgb.green > 10 && rgb.blue > 10, JSON.stringify(rgb));
       if (process.env.SHOT) await p.screenshot({ path: process.env.SHOT + '-cg.png' });
       // change selection → stale; numbers kept
       await p.click(`#bodies tr[data-row="${names.indexOf('lump')}"] td:nth-child(2)`);
@@ -142,7 +167,9 @@ const TILT = { rx: 25, ry: -10, rz: 15 }, O = [5, -3, 8];
       check('JSON axis point/direction/basis', ax.point.join() === s.axis.p.join() && ax.direction.join() === s.axis.d.join() && ax.basis.w.every((v, k) => Math.abs(v - s.axis.d[k]) < 1e-9) && Math.abs(dot(ax.basis.u, ax.basis.w)) < 1e-12, JSON.stringify(ax.basis.u));
       check('CSV axis + basis rows', /axis,direction \(world\),/.test(csv) && /basis,w \(world\),/.test(csv) && /basis,u \(world\),/.test(csv));
       const cgJ = j.assemblyCG;
-      check('JSON includes assembly CG (c, mass, bodies)', !!(cgJ && Array.isArray(cgJ.c) && cgJ.c.length === 3 && typeof cgJ.mass === 'number' && Array.isArray(cgJ.bodies) && cgJ.bodies.length >= 1), JSON.stringify(cgJ));
+      const cgBodies = (cgJ && cgJ.bodies) || [];
+      const refs = cgBodies.every(b => b && Number.isFinite(b.index) && Number.isFinite(b.vol) && Array.isArray(b.bbox) && b.bbox.length === 6);
+      check('JSON includes assembly CG (c, mass, body fingerprints)', !!(cgJ && Array.isArray(cgJ.c) && cgJ.c.length === 3 && typeof cgJ.mass === 'number' && cgBodies.length >= 1 && refs), JSON.stringify(cgJ));
       check('CSV includes assembly CG rows', /assembly CG,X mm,/.test(csv) && /assembly CG,Y mm,/.test(csv) && /assembly CG,Z mm,/.test(csv) && /assembly CG,mass g,/.test(csv));
       const resid0 = await p.textContent('#resid'), jf = path.join(require('os').tmpdir(), 'rab-session.json'); fs.writeFileSync(jf, JSON.stringify(j));
       await p.reload(); await p.setInputFiles('#file', FIX); await p.waitForFunction(() => / bodies ·/.test(document.querySelector('#status').textContent), null, { timeout: 60000 });
