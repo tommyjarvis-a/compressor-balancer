@@ -1,12 +1,17 @@
 import { KGM3, add, scale, derive, eig3, zero } from './mass.js';
 import { frame, imbalance, twoPlane, axisNames } from './imbalance.js';
-import { makeTool, toolMoments, valid, PARAMS, COMMON_PARAMS } from './tools.js';
+import { makeTool, toolMoments, valid, eulerZYX, PARAMS, COMMON_PARAMS } from './tools.js';
+import { fitCylinder, fitLoop, faceOf, makeAxis, canon } from './fit.js';
 import { optimize } from './optimize.js';
 import { toStep } from './step-export.js';
 import { createView } from './view.js';
 
-const VERSION = '0.1.2-alpha', $ = s => document.querySelector(s), view = createView($('#view'));
-const st = { bodies: [], tools: [], last: null, undo: null };
+const VERSION = '0.1.2-alpha', $ = s => document.querySelector(s);
+// Without WebGL (blocked, no GPU and no software fallback) everything but the 3-D view still works.
+let view; try { view = createView($('#view')); } catch (e) {
+  view = new Proxy({}, { get: () => () => null }); queueMicrotask(() => card('err', `<b>3-D view unavailable</b>: WebGL could not start (${esc(e.message)}). Mass properties, balancing and export still work; enable hardware acceleration in the browser settings for the view.`));
+}
+const st = { bodies: [], tools: [], last: null, undo: null, sel: -1, axis: { p: [0, 0, 0], d: [0, 0, 1], src: 'Z' }, pick: null };
 const fmt = (v, d = 3) => Math.abs(v) >= 1e5 || (v && Math.abs(v) < 1e-3) ? v.toExponential(d - 1) : (+v.toFixed(d)).toString();
 const status = s => $('#status').textContent = s;
 
@@ -56,22 +61,36 @@ async function loadFiles(files) {
       status(`${f.name}: ${r.bodies.length} bodies · ${s.mode} · ${(s.tris / 1e3).toFixed(0)}k triangles · ${(s.ms / 1000).toFixed(1)} s` + (nrem ? ` (${nrem} REMOVE_ solid${nrem > 1 ? 's' : ''} counted as material removal, negative mass)` : ''));
     }
   } finally { busy = false; }
-  view.setBodies(st.bodies); view.fit(); renderBodies(); renderAxis(); update();
+  st.sel = -1; view.setBodies(st.bodies); view.fit(); renderBodies(); renderAxis(); update();
 }
 
 // ---------- state → numbers ----------
 const bodyMom = b => scale(b.vol, b.sign * b.rho * KGM3), bmass = b => b.sign * b.vol.m * b.rho * KGM3;
 const baseMom = () => st.bodies.filter(b => b.on).reduce((a, b) => add(a, bodyMom(b)), zero());
 const toolsMom = () => st.tools.filter(valid).reduce((a, t) => add(a, toolMoments(t)), zero());
-function axisFrame() {
-  const v = $('#axis').value, o = ['#ox', '#oy', '#oz'].map(s => +$(s).value || 0);
-  if (v.startsWith('P')) {
-    const b = st.bodies[+v.slice(1)], d = derive(bodyMom(b)), e = eig3(d.I), g = e.val;
-    const k = [0, 1, 2].reduce((best, i) => { const s = Math.min(...[0, 1, 2].filter(j => j !== i).map(j => Math.abs(g[i] - g[j]))); return s > best[1] ? [i, s] : best; }, [0, -1])[0];
-    let a = e.vec[k]; if (a[2] < 0 || (a[2] === 0 && a[0] + a[1] < 0)) a = a.map(x => -x);
-    return frame(d.c, a);
-  }
-  return frame(o, { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] }[v]);
+// Spin axis: one object { p: point, d: unit direction, src } set by the presets (X/Y/Z through the point,
+// a body's principal axis through its CoM), typed point + direction, or 3-D picking. The u/v/w basis is
+// derived from it deterministically (imbalance.js frame); axial positions are measured along w from p.
+const PRESET = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
+function principal(i) {
+  const d = derive(bodyMom(st.bodies[i])), e = eig3(d.I), g = e.val;
+  const k = [0, 1, 2].reduce((best, i) => { const s = Math.min(...[0, 1, 2].filter(j => j !== i).map(j => Math.abs(g[i] - g[j]))); return s > best[1] ? [i, s] : best; }, [0, -1])[0];
+  return { p: d.c, d: canon(e.vec[k]) };
+}
+const axisFrame = () => frame(st.axis.p, st.axis.d);
+const num = v => +(+v).toPrecision(10);
+function setAxis(a, src, msg = '') {
+  st.axis = { p: a.p.map(num), d: a.d.map(num), src }; st.pick = null; view.setPicks([]); pickUI();
+  ['#ox', '#oy', '#oz'].forEach((s, k) => $(s).value = st.axis.p[k]); ['#dx', '#dy', '#dz'].forEach((s, k) => $(s).value = st.axis.d[k]);
+  $('#axis').value = [...$('#axis').options].some(o => o.value === src) ? src : 'C';
+  axmsg(msg); update();
+}
+const axmsg = (m, bad) => { $('#axmsg').textContent = m; $('#axmsg').className = 'hint' + (bad ? ' bad' : ''); };
+function typedAxis() {
+  const a = makeAxis(['#ox', '#oy', '#oz'].map(s => +$(s).value), ['#dx', '#dy', '#dz'].map(s => +$(s).value));
+  if (a.error) return axmsg(a.error, true);
+  const src = Object.keys(PRESET).find(k => PRESET[k].every((v, i) => v === a.d[i])) || 'C';
+  setAxis(a, src, src === 'C' ? 'custom axis' : '');
 }
 function span(fr) {
   let lo = 1 / 0, hi = -1 / 0;
@@ -82,6 +101,7 @@ function span(fr) {
 }
 
 function update() {
+  if (st.axis.src[0] === 'P' && st.bodies[+st.axis.src.slice(1)]) { const a = principal(+st.axis.src.slice(1)); st.axis.p = a.p; st.axis.d = a.d; }
   const fr = axisFrame(), base = baseMom(), tot = add(base, toolsMom()), r0 = imbalance(base, fr), r1 = imbalance(tot, fr), sp = span(fr);
   const an = axisNames(fr), vec = a => `(${a.map(v => fmt(v, 3)).join(', ')})`;
   const tp = r1.m ? twoPlane(r1, sp[0], sp[1]) : null, good = v => Math.abs(v) < 0.5 ? 'ok' : '';
@@ -102,15 +122,42 @@ function update() {
 // ---------- UI ----------
 const srcText = b => `${b.sign < 0 ? 'removal (−m) · ' : ''}${b.src}${b.material ? ' · ' + esc(b.material) : ''} · V ${fmt(b.vol.m)} mm³${b.unc ? ` · ${b.unc.rough ? '~' : ''}±${fmt(b.unc.dc * 1000, 2)} µm CoM` : ''}`;
 function renderBodies() {
-  $('#bodies tbody').innerHTML = st.bodies.map((b, i) => `<tr><td><input type="checkbox" data-on="${i}" ${b.on ? 'checked' : ''}></td>
+  $('#bodies tbody').innerHTML = st.bodies.map((b, i) => `<tr data-row="${i}" class="${i === st.sel ? 'sel' : ''}"><td><input type="checkbox" data-on="${i}" ${b.on ? 'checked' : ''}></td>
     <td>${esc(b.name)}${b.unreliable ? ` <span class="bad" title="${b.open} open/non-manifold edges (${pct(b.frac)} of edges), volume closure error ${fmt(b.eps, 2)}: mesh not closed, mass properties unreliable">⚠</span>` : b.open ? ` <span class="note" title="${b.open} open/non-manifold edges (${pct(b.frac)} of edges) but the mesh closes (volume closure error ${fmt(b.eps, 2)} ≤ 1e-4): mass properties OK">ⓘ</span>` : ''}<div class="src" data-src="${i}">${srcText(b)}</div></td>
     <td><input type="number" step="any" data-rho="${i}" value="${b.rho}"></td><td data-mass="${i}">${fmt(bmass(b))}</td></tr>`).join('');
 }
 function renderAxis() {
-  const cur = $('#axis').value || 'Z';
-  $('#axis').innerHTML = ['X', 'Y', 'Z'].map(a => `<option>${a}</option>`).join('') + st.bodies.map((b, i) => `<option value="P${i}">${esc(b.name)} principal axis</option>`).join('');
-  $('#axis').value = [...$('#axis').options].some(o => o.value === cur) ? cur : 'Z';
+  $('#axis').innerHTML = ['X', 'Y', 'Z'].map(a => `<option>${a}</option>`).join('') + st.bodies.map((b, i) => `<option value="P${i}">${esc(b.name)} principal axis</option>`).join('') + '<option value="C">custom (point + direction)</option>';
+  $('#axis').value = [...$('#axis').options].some(o => o.value === st.axis.src) ? st.axis.src : 'C';
 }
+// ---------- selection (list ⇄ 3-D view) and axis picking ----------
+function select(i, from) {
+  st.sel = i; view.select(i);
+  document.querySelectorAll('#bodies tr[data-row]').forEach(r => r.classList.toggle('sel', +r.dataset.row === i));
+  if (i >= 0 && from === 'view') { document.querySelector(`#bodies tr[data-row="${i}"]`)?.scrollIntoView({ block: 'nearest' }); status(`Selected ${st.bodies[i].name}`); }
+}
+const PICK = { cyl: 'click a cylindrical face', loop: 'click a face next to a circular edge (hole, boss, end face)', pts: 'click the first point' };
+function pickUI() { document.querySelectorAll('[data-pick]').forEach(b => b.classList.toggle('on', b.dataset.pick === st.pick?.mode)); view.cursor(st.pick ? 'crosshair' : ''); }
+function startPick(mode) { st.pick = st.pick?.mode === mode ? null : { mode, pts: [] }; view.setPicks([]); pickUI(); axmsg(st.pick ? `Pick: ${PICK[mode]} (Esc cancels)` : ''); }
+function onPick(hit) {
+  const pk = st.pick; if (!hit) return axmsg(`Pick: nothing under the pointer — ${PICK[pk.mode]}`, true);
+  const b = st.bodies[hit.body];
+  if (pk.mode === 'pts') {
+    pk.pts.push(hit.point); view.setPicks(pk.pts);
+    if (pk.pts.length < 2) return axmsg('Pick: click the second point');
+    const a = makeAxis(pk.pts[0], pk.pts[1].map((v, k) => v - pk.pts[0][k]));
+    if (a.error) { pk.pts = []; view.setPicks([]); return axmsg(a.error + ' — click the first point again', true); }
+    a.d = canon(a.d); return setAxis(a, 'C', 'axis through 2 picked points');
+  }
+  const f = faceOf(b.faces || [], hit.tri); if (!f) return axmsg('no B-rep face data for this body', true);
+  const r = (pk.mode === 'cyl' ? fitCylinder : fitLoop)(b.pos, b.idx, f[0], f[1], hit.point);
+  if (r.error) return axmsg(r.error, true);
+  // cylinder: the axis point is the foot of the picked point on the fitted axis
+  const t = pk.mode === 'cyl' ? hit.point.reduce((a, v, k) => a + (v - r.p[k]) * r.d[k], 0) : 0, p = r.p.map((v, k) => v + t * r.d[k]);
+  setAxis({ p, d: r.d }, 'C', `${pk.mode === 'cyl' ? 'cylinder' : 'circular edge'} of ${b.name}: r = ${fmt(r.r, 4)} mm, fit RMS ${fmt(100 * r.rms, 2)} % of r`);
+}
+view.onClick(hit => st.pick ? onPick(hit) : select(hit ? hit.body : -1, 'view'));
+document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (st.pick) { st.pick = null; view.setPicks([]); pickUI(); axmsg('Pick cancelled'); } else select(-1); });
 const LABEL = { h: 'h', x: 'x', y: 'y', z: 'z', rx: 'rx°', ry: 'ry°', rz: 'rz°', rho: 'ρ', r: 'r', ri: 'ri', ro: 'ro', a0: 'a0°', sweep: 'sw°', sc: 'scale' };
 function renderTools() {
   $('#tools').innerHTML = st.tools.map((t, i) => `<div class="tool" data-i="${i}">
@@ -140,17 +187,23 @@ $('#panel').addEventListener('input', e => {
 $('#panel').addEventListener('change', e => {
   const el = e.target, card = el.closest('.tool');
   if (el.dataset.on) { const i = +el.dataset.on; st.bodies[i].on = el.checked; view.showBody(i, el.checked); return update(); }
-  if (el.id === 'axis' || /^o[xyz]$/.test(el.id)) return update();
+  if (el.id === 'axis') { const v = el.value; if (PRESET[v]) setAxis({ p: st.axis.p, d: PRESET[v] }, v); else if (v[0] === 'P') setAxis(principal(+v.slice(1)), v); else axmsg('custom axis: type the point and direction, or pick it in the 3-D view'); return; }
+  if (/^[od][xyz]$/.test(el.id)) return typedAxis();
   if (el.id === 'defrho') { st.bodies.forEach(b => { if (b.src === 'default') b.rho = +el.value; }); renderBodies(); return update(); }
   if (card && el.dataset.free) { const t = st.tools[+card.dataset.i], k = el.dataset.free; t.free ??= {}; if (el.checked) t.free[k] = defBounds(k, t[k]); else delete t.free[k]; renderTools(); }
   if (card && (el.dataset.k === 'sign' || el.dataset.k === 'role')) { renderTools(); update(); }
 });
 $('#panel').addEventListener('click', e => {
-  const el = e.target;
+  const el = e.target, row = el.closest('#bodies tr[data-row]');
+  if (row && !el.closest('input')) select(+row.dataset.row === st.sel ? -1 : +row.dataset.row, 'list');
+  if (el.dataset.pick) startPick(el.dataset.pick);
   if (el.dataset.add) {
-    const { sp } = update(), z = st.tools.length % 2 ? sp[0] - 5 : sp[1], t = makeTool(el.dataset.add, { z });
-    t.free = el.dataset.add === 'sector' ? { a0: [-180, 180], sweep: [5, 180], h: [0.2, 20] } : el.dataset.add === 'cylinder' ? { x: [-60, 60], y: [-60, 60] } : { rz: [-180, 180], h: [0.2, 20] };
-    if (el.dataset.add === 'cylinder') Object.assign(t, { x: 30, r: 5 });
+    // new tools sit on the spin axis (local z = w) at an end of the span; a cylinder 30 mm off-axis along u
+    const { fr, sp } = update(), z = st.tools.length % 2 ? sp[0] - 5 : sp[1], k = el.dataset.add === 'cylinder' ? 30 : 0, R = fr.R;
+    const pos = [0, 1, 2].map(i => num(fr.o[i] + k * R[i] + z * R[6 + i])), ang = eulerZYX([R[0], R[3], R[6], R[1], R[4], R[7], R[2], R[5], R[8]]);
+    const t = makeTool(el.dataset.add, { x: pos[0], y: pos[1], z: pos[2], ...Object.fromEntries(Object.entries(ang).map(([a, v]) => [a, num(v)])) }), c = (v, w) => [num(v - w), num(v + w)];
+    t.free = el.dataset.add === 'sector' ? { a0: [-180, 180], sweep: [5, 180], h: [0.2, 20] } : el.dataset.add === 'cylinder' ? { x: c(t.x, 60), y: c(t.y, 60) } : { rz: [-180, 180], h: [0.2, 20] };
+    if (el.dataset.add === 'cylinder') t.r = 5;
     st.tools.push(t); renderTools(); update(); if (!st.bodies.length) view.fit();
   }
   if (el.dataset.del) { st.tools.splice(+el.dataset.del, 1); renderTools(); update(); }
@@ -180,7 +233,8 @@ function runOpt() {
 // ---------- export / session ----------
 function save(name, text, type) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1e4); }
 const resRows = (r, an) => [[`residual`, `U${an.n[0]} g.mm`, r.U[0]], ['residual', `U${an.n[1]} g.mm`, r.U[1]], ['residual', `C${an.n[0]} g.mm2`, r.C[0]], ['residual', `C${an.n[1]} g.mm2`, r.C[1]],
-  ...(an.n[0] === 'u' ? ['u', 'v', 'w'].map(k => ['basis', `${k} (world)`, an[k].join(' ')]) : [])];
+  ['axis', 'point (world mm)', st.axis.p.join(' ')], ['axis', 'direction (world)', st.axis.d.join(' ')], ['axis', 'source', st.axis.src], ...['u', 'v', 'w'].map(k => ['basis', `${k} (world)`, an[k].join(' ')])];
+const axisJson = an => ({ point: st.axis.p, direction: st.axis.d, source: st.axis.src, basis: { u: an.u, v: an.v, w: an.w }, note: 'spin axis through point along direction (= w); u, v ⊥ w, right-handed; axial positions are measured along w from point' });
 const resJson = (r, an) => ({ components: an.n, basis: { u: an.u, v: an.v, w: an.w }, U: r.U, C: r.C, mass: r.m,
   note: an.n[0] === 'u' ? 'U and C are components along u, v (world vectors in basis); w is the spin axis' : 'U and C are world x, y components (spin axis +Z)' });
 function exportAs(kind) {
@@ -189,14 +243,17 @@ function exportAs(kind) {
   if (kind === 'csv') return save('counterweights.csv', 'tool,kind,role,sign,removal,param,value\n' + st.tools.flatMap(t => [...PARAMS[t.kind], ...COMMON_PARAMS].map(k => [t.name, t.kind, t.role, t.sign, t.sign < 0, k, t[k]].join(','))).join('\n') +
     `\n\n${resRows(r1, axisNames(fr)).map(r => r.join(',')).join('\n')}\n`, 'text/csv');
   save('balance-session.json', JSON.stringify({ app: 'rotating-assembly-balancer', version: VERSION, units: { length: 'mm', mass: 'g', density: 'kg/m3' },
-    axis: { origin: fr.o, R: fr.R, choice: $('#axis').value }, bodies: st.bodies.map(b => ({ name: b.name, on: b.on, rho: b.rho, src: b.src, removal: b.sign < 0, mass: bmass(b) })),
+    axis: axisJson(axisNames(fr)), bodies: st.bodies.map(b => ({ name: b.name, on: b.on, rho: b.rho, src: b.src, removal: b.sign < 0, mass: bmass(b) })),
     tools: st.tools.map(t => ({ ...t, removal: t.sign < 0 })), residual: resJson(r1, axisNames(fr)), optimisation: st.last }, null, 1), 'application/json');
 }
 function loadSession(j) {
   if (!Array.isArray(j.tools)) return status('JSON has no tools[]');
   st.tools = j.tools.map(({ id, removal, ...t }) => makeTool(t.kind, t));
   for (const b of j.bodies || []) { const m = st.bodies.find(x => x.name === b.name); if (m) Object.assign(m, { rho: b.rho, src: b.src, on: b.on }); }
-  renderBodies(); renderTools(); update(); status('Session loaded');
+  renderBodies(); renderTools(); renderAxis();
+  const ax = j.axis || {}, a = makeAxis(ax.point || ax.origin || [0, 0, 0], ax.direction || ax.R?.slice(6, 9) || [0, 0, 1]); // 0.1.x sessions: origin + R
+  const src = ax.source ?? ax.choice; if (!a.error) setAxis(a, PRESET[src] || (src?.[0] === 'P' && st.bodies[+src.slice(1)]) ? src : 'C'); else update();
+  status('Session loaded');
 }
 
 const drop = $('#drop');
@@ -204,4 +261,5 @@ const drop = $('#drop');
 ['dragleave', 'drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
 document.addEventListener('drop', e => loadFiles([...e.dataTransfer.files]).catch(err => status('Error: ' + err.message)));
 $('#file').addEventListener('change', e => loadFiles([...e.target.files]).catch(err => status('Error: ' + err.message)));
-renderAxis(); update();
+renderAxis(); setAxis(st.axis, 'Z');
+window.rab = { st, view }; // test hook (tools/ui-smoke.cjs)

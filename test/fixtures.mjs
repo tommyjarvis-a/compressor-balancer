@@ -1,5 +1,5 @@
 // Synthetic fixture definitions (closed-form references for the tests; no real customer parts).
-import { makeTool } from '../src/tools.js';
+import { makeTool, rotMat } from '../src/tools.js';
 import { toStep } from '../src/step-export.js';
 export const FIX = {
   box: [makeTool('prism', { name: 'box', pts: [[0, 0], [40, 0], [40, 20], [0, 20]], h: 10, x: 5, y: -3, z: 2 })],
@@ -18,7 +18,13 @@ export const FIX = {
     makeTool('cylinder', { name: 'hub', r: 25, ri: 8, h: 12, z: 20, rho: 2700 }),
     makeTool('cylinder', { name: 'pin', r: 2, h: 10, x: 15, z: 40, rho: 8900 }),
   ],
+  // rotor-unbalanced-like assembly on a tilted axis (through O along w = rotMat(TILT)·z), for axis picking
+  'tilted-rotor': tilted([['shaft', 'cylinder', { r: 6, h: 100 }, -25], ['rotor', 'cylinder', { r: 30, ri: 6, h: 40 }, 0], ['lump', 'sector', { ri: 20, ro: 30, a0: 30, sweep: 40, h: 4 }, 40]]),
 };
+function tilted(parts) {
+  const TILT = { rx: 25, ry: -10, rz: 15 }, O = [5, -3, 8], R = rotMat(TILT);
+  return parts.map(([name, kind, o, z]) => makeTool(kind, { name, ...o, ...TILT, x: O[0] + z * R[2], y: O[1] + z * R[5], z: O[2] + z * R[8] }));
+}
 const NODENS = { 'mixed-density': ['pin'] };
 // The exact STEP text written for fixture k (timestamp pinned so files are reproducible).
 export const fixtureStep = k => toStep(FIX[k], { name: k, unit: k.endsWith('metre') ? 'm' : 'mm', density: t => !(NODENS[k] || []).includes(t.name) })

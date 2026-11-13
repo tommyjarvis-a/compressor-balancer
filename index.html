@@ -19,12 +19,15 @@
     <div id="cards"></div>
     <div class="row"><label title="accurate = two tessellations + Richardson extrapolation">Mass props <select id="quality"><option value="accurate" selected>accurate (2-pass)</option><option value="fast">fast</option></select></label>
       <label>Default <select id="defrho"><option value="7850">Steel 7850</option><option value="2700">Aluminium 2700</option><option value="7200">Cast iron 7200</option><option value="8900">Copper 8900</option></select> kg/m³</label></div>
-    <table id="bodies"><thead><tr><th></th><th>Body</th><th>ρ kg/m³</th><th>Mass g</th></tr></thead><tbody></tbody></table>
+    <table id="bodies" title="Click a row (or a body in the 3-D view) to select it; Esc deselects"><thead><tr><th></th><th>Body</th><th>ρ kg/m³</th><th>Mass g</th></tr></thead><tbody></tbody></table>
   </section>
   <section>
     <h2>2 · Spin axis &amp; residuals</h2>
     <div class="row"><label>Axis <select id="axis"></select></label>
-      <label>Origin <input id="ox" type="number" value="0" step="any"> <input id="oy" type="number" value="0" step="any"> <input id="oz" type="number" value="0" step="any"></label></div>
+      <span class="picks" title="Pick the spin axis in the 3-D view">Pick <button data-pick="cyl">cylinder</button><button data-pick="loop">circle edge</button><button data-pick="pts">2 points</button></span></div>
+    <div class="row axin"><label title="A point on the spin axis (world mm); axial positions are measured from it">Point <input id="ox" type="number" value="0" step="any"><input id="oy" type="number" value="0" step="any"><input id="oz" type="number" value="0" step="any"></label>
+      <label title="Axis direction (world; normalised)">Dir <input id="dx" type="number" value="0" step="any"><input id="dy" type="number" value="0" step="any"><input id="dz" type="number" value="1" step="any"></label></div>
+    <div id="axmsg" class="hint"></div>
     <div id="resid" class="resid"></div>
   </section>
   <section>

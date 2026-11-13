@@ -22,6 +22,9 @@ export function rotMat(t) {
   return [cc * cb, cc * sb * sa - sc * ca, cc * sb * ca + sc * sa, sc * cb, sc * sb * sa + cc * ca, sc * sb * ca - cc * sa, -sb, cb * sa, cb * ca];
 }
 
+// Rz·Ry·Rx angles (degrees) of a rotation matrix (row-major): the inverse of rotMat.
+export function eulerZYX(M) { const D = 180 / Math.PI; return { rx: Math.atan2(M[7], M[8]) * D, ry: -Math.asin(Math.max(-1, Math.min(1, M[6]))) * D, rz: Math.atan2(M[3], M[0]) * D }; }
+
 const ring = t => t.kind === 'cylinder' ? { ri: t.ri, ro: t.r, a0: 0, sw: 360 } : { ri: t.ri, ro: t.ro, a0: t.a0, sw: t.sweep };
 const polyPts = t => {
   let p = t.pts.map(([x, y]) => [x * t.sc, y * t.sc]);

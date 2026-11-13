@@ -13,3 +13,5 @@ table{width:100%;border-collapse:collapse}td,th{padding:2px 4px;text-align:left;
 @media (max-width:760px){main{flex-direction:column-reverse;height:auto}#panel{width:100%;border:0}#view{height:55vh;flex:none}}
 .card{border-radius:6px;padding:6px 8px;margin:6px 0;font-size:12px;display:flex;gap:6px;align-items:center;justify-content:space-between}.card.info{background:#eef4ff;border:1px solid #9bb8f0}.card.err{background:#fdecec;border:1px solid #e09a9a}.card.warn{background:#fff7e0;border:1px solid #e6c56b}.card.quiet{background:none;border:1px solid #d8dce4;color:#5b6475}.card .x{padding:0 5px;border:0;background:none}
 [hidden]{display:none!important}
+#bodies tbody tr{cursor:pointer}#bodies tr.sel td{background:#dfe9fb}#bodies tr.sel td:first-child{box-shadow:inset 3px 0 #1f5fd6}
+.axin input[type=number]{width:58px}.picks button.on{background:#1f5fd6;color:#fff;border-color:#1f5fd6}#axmsg.bad{color:#b4232c}
