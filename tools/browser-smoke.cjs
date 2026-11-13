@@ -2,7 +2,7 @@
 // above MAX_GAP ms while importing) and finishes within TIME_LIMIT s. Needs Playwright (not a dependency):
 //   npm i --no-save playwright && npx playwright install chromium webkit
 //   python3 -m http.server 8765 &   node tools/browser-smoke.cjs [url] [file.stp ...]
-// Env: BROWSERS=chromium,webkit  HEADED=1  MAX_GAP=1500  TIME_LIMIT=60  PLAYWRIGHT=/path/to/playwright
+// Env: BROWSERS=chromium,webkit (or msedge: installed Microsoft Edge)  HEADED=1  MAX_GAP=1500  TIME_LIMIT=60  PLAYWRIGHT=/path/to/playwright
 const pw = require(process.env.PLAYWRIGHT || 'playwright'), path = require('path'), fs = require('fs');
 const [url = 'http://localhost:8765/', ...files0] = process.argv.slice(2);
 const dir = path.join(__dirname, '../test/fixtures'), files = files0.length ? files0 : fs.readdirSync(dir).filter(f => f.endsWith('.stp')).map(f => path.join(dir, f));
@@ -10,7 +10,7 @@ const MAX_GAP = +(process.env.MAX_GAP || 1500), LIMIT = +(process.env.TIME_LIMIT
 (async () => {
   let fail = 0;
   for (const name of (process.env.BROWSERS || 'chromium,webkit').split(',')) {
-    const b = await pw[name].launch({ headless: !process.env.HEADED });
+    const b = await (name === 'msedge' ? pw.chromium.launch({ channel: 'msedge', headless: !process.env.HEADED, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] }) : pw[name].launch({ headless: !process.env.HEADED }));
     for (const f of files) {
       const p = await b.newPage(), errs = [];
       p.on('pageerror', e => errs.push(e.message)); p.on('crash', () => errs.push('page crashed'));

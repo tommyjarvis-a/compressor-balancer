@@ -1,0 +1,103 @@
+// Headed UI smoke: triad, body selection (list ⇄ view, drag ≠ click, Esc), typed axis, axis picking
+// (cylinder, circular edge, 2 points), optimiser about a tilted axis, JSON/CSV export and session reload.
+// Uses test/fixtures/tilted-rotor.stp (shaft + ring rotor + lump on a tilted axis). Needs Playwright:
+//   python3 -m http.server 8765 &   HEADED=1 node tools/ui-smoke.cjs [url]
+// Env: BROWSERS=chromium,webkit (or msedge: installed Microsoft Edge)  HEADED=1  PLAYWRIGHT=/path/to/playwright
+const pw = require(process.env.PLAYWRIGHT || 'playwright'), path = require('path'), fs = require('fs');
+const url = process.argv[2] || 'http://localhost:8765/', FIX = path.join(__dirname, '../test/fixtures/tilted-rotor.stp');
+const TILT = { rx: 25, ry: -10, rz: 15 }, O = [5, -3, 8];
+(async () => {
+  const { rotMat } = await import('../src/tools.js'), R = rotMat(TILT), W = [R[2], R[5], R[8]];
+  const world = ([x, y, z]) => [0, 1, 2].map(k => O[k] + R[3 * k] * x + R[3 * k + 1] * y + R[3 * k + 2] * z);
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2], sub = (a, b) => a.map((v, k) => v - b[k]);
+  let fail = 0;
+  for (const name of (process.env.BROWSERS || 'chromium,webkit').split(',')) {
+    const b = await (name === 'msedge' ? pw.chromium.launch({ channel: 'msedge', headless: !process.env.HEADED, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] }) : pw[name].launch({ headless: !process.env.HEADED })), ctx = await b.newContext({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 2, acceptDownloads: true });
+    const p = await ctx.newPage(), errs = [], res = [];
+    p.on('pageerror', e => errs.push(e.message));
+    const check = (label, ok, info = '') => { res.push(`${ok ? 'ok ' : 'FAIL'} ${label}${info ? ' — ' + info : ''}`); if (!ok) fail++; };
+    const st = () => p.evaluate(() => JSON.parse(JSON.stringify({ sel: rab.st.sel, axis: rab.st.axis, msg: document.querySelector('#axmsg').textContent, last: rab.st.last, names: rab.st.bodies.map(b => b.name) })));
+    // first screen point (of a list of local fixture points) where the 3-D view hits the expected body near that point
+    const find = (body, pts) => p.evaluate(([body, pts]) => { for (const q of pts) { const [x, y] = rab.view.project(q), h = rab.view.pick(x, y);
+      // robust spot: the same body also within ±4 px (clicks may land on rounded pixel coordinates)
+      const near = [[-4, -4], [4, -4], [-4, 4], [4, 4]].every(([dx, dy]) => { const g = rab.view.pick(x + dx, y + dy); return g && g.body === h?.body; });
+      if (h && near && rab.st.bodies[h.body].name === body && Math.hypot(...h.point.map((v, k) => v - q[k])) < 1) return { x: Math.round(x), y: Math.round(y) }; } return null; }, [body, pts])
+      .then(r => r && p.evaluate(([x, y]) => ({ x, y, point: rab.view.pick(x, y).point }), [r.x, r.y]));
+    const ring = (r, z, from = 0, to = 360) => { const o = []; for (let a = from; a < to; a += 10) o.push(world([r * Math.cos(a * Math.PI / 180), r * Math.sin(a * Math.PI / 180), z])); return o; };
+    try {
+      await p.goto(url); await p.setInputFiles('#file', FIX);
+      await p.waitForFunction(() => / bodies ·/.test(document.querySelector('#status').textContent), null, { timeout: 60000 });
+      const names = (await st()).names, iRotor = names.indexOf('rotor'), iShaft = names.indexOf('shaft');
+      const view = await p.locator('#view canvas').boundingBox();
+      // --- triad: red/green/blue pixels in the lower-left inset, follows the camera, survives resize
+      const colours = async () => { const box = await p.locator('#view canvas').boundingBox(), px = await p.evaluate(() => rab.view.triadPx);
+        const png = await p.screenshot({ clip: { x: box.x, y: box.y + box.height - px, width: px, height: px } });
+        return p.evaluate(async b64 => { const im = new Image(); im.src = 'data:image/png;base64,' + b64; await im.decode(); const c = document.createElement('canvas'); c.width = im.width; c.height = im.height;
+          const g = c.getContext('2d'); g.drawImage(im, 0, 0); const d = g.getImageData(0, 0, c.width, c.height).data, n = [0, 0, 0];
+          for (let i = 0; i < d.length; i += 4) { const [r, gg, bb] = [d[i], d[i + 1], d[i + 2]]; if (r > 170 && gg < 90 && bb < 90) n[0]++; else if (gg > 120 && r < 90 && bb < 110) n[1]++; else if (bb > 160 && r < 90 && gg < 140) n[2]++; }
+          return n; }, png.toString('base64')); };
+      const c0 = await colours(); check('triad drawn (red/green/blue px)', c0.every(n => n > 50), c0.join('/'));
+      const t0 = await p.evaluate(() => rab.view.triadScreen());
+      const tgt = await find('rotor', ring(30, 20)); if (!tgt) throw new Error('rotor not under any probe point');
+      await p.mouse.move(tgt.x - 160, tgt.y - 30); await p.mouse.down(); await p.mouse.move(tgt.x - 60, tgt.y, { steps: 8 }); await p.mouse.move(tgt.x, tgt.y, { steps: 8 }); await p.mouse.up();
+      await p.waitForTimeout(400);
+      const t1 = await p.evaluate(() => rab.view.triadScreen()), moved = Math.hypot(t1[0][0] - t0[0][0], t1[0][1] - t0[0][1]);
+      check('triad follows an orbit drag', moved > 0.05, `X ${JSON.stringify(t0[0])} → ${JSON.stringify(t1[0])}`);
+      check('drag ending on a body does not select it', (await st()).sel === -1);
+      // triad X direction matches the main view's projected world X
+      await p.setViewportSize({ width: 1000, height: 700 }); await p.waitForTimeout(500);
+      const c1 = await colours(); check('triad after resize', c1.every(n => n > 50), c1.join('/'));
+      await p.setViewportSize({ width: 1400, height: 900 }); await p.waitForTimeout(500);
+      // --- selection: view → list, list → view, Esc, empty space
+      let h = await find('rotor', ring(30, 20)); await p.mouse.click(h.x, h.y); let s = await st();
+      const rowSel = await p.evaluate(() => [...document.querySelectorAll('#bodies tr.sel')].map(r => +r.dataset.row));
+      check('click body in view selects it + list row', s.sel === iRotor && rowSel.join() === String(iRotor), `sel ${s.sel} rows ${rowSel}`);
+      await p.click(`#bodies tr[data-row="${iShaft}"] td:nth-child(2)`); s = await st();
+      const hl = await p.evaluate(() => rab.view.highlighted());
+      check('click list row selects body + highlights it in the view', s.sel === iShaft && hl.every((v, i) => v === (i === iShaft)), `sel ${s.sel} highlight ${hl}`);
+      if (process.env.SHOT) await p.screenshot({ path: process.env.SHOT + '-select.png' });
+      await p.keyboard.press('Escape'); check('Esc deselects', (await st()).sel === -1);
+      await p.mouse.click(h.x, h.y); await p.mouse.click(view.x + view.width - 30, view.y + 30); check('click empty space deselects', (await st()).sel === -1);
+      // --- typed axis
+      const typeAxis = async (o, d) => { for (const [k, v] of [['ox', o[0]], ['oy', o[1]], ['oz', o[2]], ['dx', d[0]], ['dy', d[1]], ['dz', d[2]]]) { await p.fill('#' + k, String(v)); await p.dispatchEvent('#' + k, 'change'); } };
+      await typeAxis([0, 0, 0], [0, 0, 0]); s = await st(); check('zero direction rejected', /non-zero/.test(s.msg) && s.axis.d.join() === '0,0,1', s.msg);
+      await typeAxis([1, 2, 3], [1, 0, 2]); s = await st();
+      check('typed axis normalised', Math.abs(s.axis.d[0] - 1 / Math.sqrt(5)) < 1e-9 && Math.abs(s.axis.d[2] - 2 / Math.sqrt(5)) < 1e-9 && s.axis.src === 'C' && (await p.inputValue('#axis')) === 'C', JSON.stringify(s.axis));
+      // --- picking: cylinder face (rotor outer surface)
+      await p.click('[data-pick="cyl"]'); h = await find('rotor', ring(30, 20)); await p.mouse.click(h.x, h.y); s = await st();
+      const off = sub(s.axis.p, O), perp = Math.hypot(...sub(off, W.map(v => v * dot(off, W))));
+      check('pick cylinder → tilted axis', Math.abs(Math.abs(dot(s.axis.d, W)) - 1) < 1e-6 && perp < 1e-3 && /cylinder of rotor: r = 30/.test(s.msg), `|d·w| ${Math.abs(dot(s.axis.d, W))} off ${perp.toExponential(1)} mm; ${s.msg}`);
+      check('pick ended, selection untouched', (await st()).sel === -1 && !(await p.evaluate(() => rab.st.pick)));
+      // circular edge: rotor top face (local z = 40) near its outer rim, away from the lump (a0 30°..70°)
+      await p.click('[data-pick="loop"]'); h = await find('rotor', ring(26, 40, 100, 360)); await p.mouse.click(h.x, h.y); s = await st();
+      const ctr = world([0, 0, 40]);
+      check('pick circular edge → centre + normal', Math.hypot(...sub(s.axis.p, ctr)) < 1e-3 && Math.abs(Math.abs(dot(s.axis.d, W)) - 1) < 1e-6 && /circular edge of rotor: r = 30/.test(s.msg), `${Math.hypot(...sub(s.axis.p, ctr)).toExponential(1)} mm; ${s.msg}`);
+      // two points
+      await p.click('[data-pick="pts"]'); const a = await find('rotor', ring(30, 10)), bb = await find('rotor', ring(26, 40, 100, 360));
+      await p.mouse.click(a.x, a.y); const mid = await st(); await p.mouse.click(bb.x, bb.y); s = await st();
+      const e = sub(bb.point, a.point), en = Math.hypot(...e);
+      check('pick 2 points → axis through them', /second point/.test(mid.msg) && Math.abs(Math.abs(dot(s.axis.d, e)) / en - 1) < 1e-5 && /2 picked points/.test(s.msg), s.msg);
+      // Esc cancels a pending pick
+      await p.click('[data-pick="cyl"]'); await p.keyboard.press('Escape'); check('Esc cancels pick', !(await p.evaluate(() => rab.st.pick)) && /cancelled/.test((await st()).msg));
+      // --- optimiser about the tilted axis (typed exactly), two sectors placed on the axis
+      await typeAxis(O, W.map(v => +v.toPrecision(12))); await p.click('[data-add="sector"]'); await p.click('[data-add="sector"]');
+      await p.click('#run'); await p.waitForFunction(() => rab.st.last, null, { timeout: 30000 }); s = await st();
+      const U = Math.hypot(...s.last.after.U), C = Math.hypot(...s.last.after.C), U0 = Math.hypot(...s.last.before.U);
+      if (process.env.SHOT) await p.screenshot({ path: process.env.SHOT + '-axis.png' });
+      check('optimiser balances about the tilted axis', U < 0.05 && C < 5 && U0 > 100, `|U| ${U0.toFixed(1)} → ${U.toExponential(2)} g·mm, |C| → ${C.toExponential(2)} g·mm²`);
+      // --- export + session reload
+      const dl = async k => { const [d] = await Promise.all([p.waitForEvent('download'), p.click(`[data-exp="${k}"]`)]); return fs.readFileSync(await d.path(), 'utf8'); };
+      const j = JSON.parse(await dl('json')), csv = await dl('csv'), ax = j.axis;
+      check('JSON axis point/direction/basis', ax.point.join() === s.axis.p.join() && ax.direction.join() === s.axis.d.join() && ax.basis.w.every((v, k) => Math.abs(v - s.axis.d[k]) < 1e-9) && Math.abs(dot(ax.basis.u, ax.basis.w)) < 1e-12, JSON.stringify(ax.basis.u));
+      check('CSV axis + basis rows', /axis,direction \(world\),/.test(csv) && /basis,w \(world\),/.test(csv) && /basis,u \(world\),/.test(csv));
+      const resid0 = await p.textContent('#resid'), jf = path.join(require('os').tmpdir(), 'rab-session.json'); fs.writeFileSync(jf, JSON.stringify(j));
+      await p.reload(); await p.setInputFiles('#file', FIX); await p.waitForFunction(() => / bodies ·/.test(document.querySelector('#status').textContent), null, { timeout: 60000 });
+      await p.setInputFiles('#file', jf); await p.waitForFunction(() => /Session loaded/.test(document.querySelector('#status').textContent), null, { timeout: 10000 }); s = await st();
+      check('session reload restores axis + residuals', s.axis.p.join() === ax.point.join() && s.axis.d.join() === ax.direction.join() && (await p.textContent('#resid')) === resid0);
+    } catch (e) { check('run', false, e.message); }
+    check('no page errors', !errs.length, errs.join(' | '));
+    console.log(`${name}:\n  ` + res.join('\n  '));
+    await Promise.race([b.close(), new Promise(r => setTimeout(r, 5000))]);
+  }
+  console.log(fail ? `${fail} FAILED` : 'ALL PASS'); process.exit(fail ? 1 : 0);
+})();
