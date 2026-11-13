@@ -29,13 +29,14 @@ async function loadFiles(files) {
     if (!passes.every(r => r.success)) { status(`Could not read ${f.name} (not a valid STEP?)`); continue; }
     let dens = []; try { dens = readDensities(new TextDecoder('latin1').decode(buf)); } catch { }
     st.bodies.push(...buildBodies(passes, dens, +$('#defrho').value, f.name));
-    status(`${f.name}: ${res.meshes.length} bodies`);
+    const nrem = st.bodies.filter(b => b.sign < 0 && b.file === f.name).length;
+    status(`${f.name}: ${res.meshes.length} bodies` + (nrem ? ` (${nrem} REMOVE_ solid${nrem > 1 ? 's' : ''} counted as material removal, negative mass)` : ''));
   }
   view.setBodies(st.bodies); view.fit(); renderBodies(); renderAxis(); update();
 }
 
 // ---------- state → numbers ----------
-const bodyMom = b => scale(b.vol, b.rho * KGM3);
+const bodyMom = b => scale(b.vol, b.sign * b.rho * KGM3), bmass = b => b.sign * b.vol.m * b.rho * KGM3;
 const baseMom = () => st.bodies.filter(b => b.on).reduce((a, b) => add(a, bodyMom(b)), zero());
 const toolsMom = () => st.tools.filter(valid).reduce((a, t) => add(a, toolMoments(t)), zero());
 function axisFrame() {
@@ -75,11 +76,11 @@ function update() {
 }
 
 // ---------- UI ----------
-const srcText = b => `${b.src}${b.material ? ' · ' + esc(b.material) : ''} · V ${fmt(b.vol.m)} mm³${b.unc ? ` · ±${fmt(b.unc.dc * 1000, 2)} µm CoM` : ''}`;
+const srcText = b => `${b.sign < 0 ? 'removal (−m) · ' : ''}${b.src}${b.material ? ' · ' + esc(b.material) : ''} · V ${fmt(b.vol.m)} mm³${b.unc ? ` · ±${fmt(b.unc.dc * 1000, 2)} µm CoM` : ''}`;
 function renderBodies() {
   $('#bodies tbody').innerHTML = st.bodies.map((b, i) => `<tr><td><input type="checkbox" data-on="${i}" ${b.on ? 'checked' : ''}></td>
     <td>${esc(b.name)}${b.open ? ` <span title="${b.open} open/non-manifold edges: mesh not closed, mass properties unreliable">⚠</span>` : ''}<div class="src" data-src="${i}">${srcText(b)}</div></td>
-    <td><input type="number" step="any" data-rho="${i}" value="${b.rho}"></td><td data-mass="${i}">${fmt(b.vol.m * b.rho * KGM3)}</td></tr>`).join('');
+    <td><input type="number" step="any" data-rho="${i}" value="${b.rho}"></td><td data-mass="${i}">${fmt(bmass(b))}</td></tr>`).join('');
 }
 function renderAxis() {
   const cur = $('#axis').value || 'Z';
@@ -103,7 +104,7 @@ const defBounds = (k, v) => /^(a0|rx|ry|rz)$/.test(k) ? [-180, 180] : k === 'swe
 
 $('#panel').addEventListener('input', e => {
   const el = e.target, card = el.closest('.tool');
-  if (el.dataset.rho) { const b = st.bodies[+el.dataset.rho]; b.rho = +el.value; b.src = 'user'; $(`[data-mass="${el.dataset.rho}"]`).textContent = fmt(b.vol.m * b.rho * KGM3); $(`[data-src="${el.dataset.rho}"]`).innerHTML = srcText(b); return update(); }
+  if (el.dataset.rho) { const b = st.bodies[+el.dataset.rho]; b.rho = +el.value; b.src = 'user'; $(`[data-mass="${el.dataset.rho}"]`).textContent = fmt(bmass(b)); $(`[data-src="${el.dataset.rho}"]`).innerHTML = srcText(b); return update(); }
   if (!card) return;
   const t = st.tools[+card.dataset.i], k = el.dataset.k;
   if (k === 'pts') { const p = el.value.split(';').map(s => s.split(',').map(Number)).filter(p => p.length === 2 && p.every(isFinite)); if (p.length >= 3) t.pts = p; }
@@ -159,15 +160,15 @@ const resJson = (r, an) => ({ components: an.n, basis: { u: an.u, v: an.v, w: an
 function exportAs(kind) {
   const { fr, r1 } = update();
   if (kind === 'step') return st.tools.some(t => valid(t) && t.sign > 0) || st.tools.some(valid) ? save('counterweights.stp', toStep(st.tools), 'application/step') : status('No valid tools to export');
-  if (kind === 'csv') return save('counterweights.csv', 'tool,kind,role,sign,param,value\n' + st.tools.flatMap(t => [...PARAMS[t.kind], ...COMMON_PARAMS].map(k => [t.name, t.kind, t.role, t.sign, k, t[k]].join(','))).join('\n') +
+  if (kind === 'csv') return save('counterweights.csv', 'tool,kind,role,sign,removal,param,value\n' + st.tools.flatMap(t => [...PARAMS[t.kind], ...COMMON_PARAMS].map(k => [t.name, t.kind, t.role, t.sign, t.sign < 0, k, t[k]].join(','))).join('\n') +
     `\n\n${resRows(r1, axisNames(fr)).map(r => r.join(',')).join('\n')}\n`, 'text/csv');
   save('balance-session.json', JSON.stringify({ app: 'compressor-balancer', version: VERSION, units: { length: 'mm', mass: 'g', density: 'kg/m3' },
-    axis: { origin: fr.o, R: fr.R, choice: $('#axis').value }, bodies: st.bodies.map(b => ({ name: b.name, on: b.on, rho: b.rho, src: b.src, mass: b.vol.m * b.rho * KGM3 })),
-    tools: st.tools, residual: resJson(r1, axisNames(fr)), optimisation: st.last }, null, 1), 'application/json');
+    axis: { origin: fr.o, R: fr.R, choice: $('#axis').value }, bodies: st.bodies.map(b => ({ name: b.name, on: b.on, rho: b.rho, src: b.src, removal: b.sign < 0, mass: bmass(b) })),
+    tools: st.tools.map(t => ({ ...t, removal: t.sign < 0 })), residual: resJson(r1, axisNames(fr)), optimisation: st.last }, null, 1), 'application/json');
 }
 function loadSession(j) {
   if (!Array.isArray(j.tools)) return status('JSON has no tools[]');
-  st.tools = j.tools.map(({ id, ...t }) => makeTool(t.kind, t));
+  st.tools = j.tools.map(({ id, removal, ...t }) => makeTool(t.kind, t));
   for (const b of j.bodies || []) { const m = st.bodies.find(x => x.name === b.name); if (m) Object.assign(m, { rho: b.rho, src: b.src, on: b.on }); }
   renderBodies(); renderTools(); update(); status('Session loaded');
 }

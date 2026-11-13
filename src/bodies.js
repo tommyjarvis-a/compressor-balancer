@@ -3,6 +3,7 @@ import { meshMoments, richardson, derive, scale, openEdges } from './mass.js';
 // Density: a STEP record whose product name matches the body wins (src 'STEP'). A file-wide value is
 // used only when no record matches any body and the file holds a single distinct density
 // (src 'STEP (file)'); otherwise the body gets the default (src 'default').
+// Solids named REMOVE_* (removal tools written by this app's STEP export) get sign −1: negative mass.
 export function buildBodies(passes, dens, defRho, fileName = '') {
   const res = passes.at(-1), two = passes.length === 2 && passes[0].meshes.length === res.meshes.length;
   const names = new Set(res.meshes.map(m => m.name)), matched = dens.some(d => names.has(d.product));
@@ -16,7 +17,7 @@ export function buildBodies(passes, dens, defRho, fileName = '') {
     }
     if (vol.m < 0) vol = scale(vol, -1);
     const own = dens.find(x => x.product === m.name), d = own || one;
-    return { name: m.name || fileName, vol, unc, rho: d ? Math.round(d.density * 1000) / 1000 : defRho, src: own ? 'STEP' : d ? 'STEP (file)' : 'default',
+    return { name: m.name || fileName, file: fileName, sign: /^REMOVE_/.test(m.name || '') ? -1 : 1, vol, unc, rho: d ? Math.round(d.density * 1000) / 1000 : defRho, src: own ? 'STEP' : d ? 'STEP (file)' : 'default',
       material: d?.material ?? null, on: true, pos, idx, nrm: m.attributes.normal?.array, open: openEdges(pos, idx),
       color: m.color && (m.color[0] * 255 << 16 | m.color[1] * 255 << 8 | m.color[2] * 255) };
   });
