@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { derive, scale, MESH, richardson } from '../src/mass.js';
 import { toolMoments } from '../src/tools.js';
 import { toStep } from '../src/step-export.js';
-import { FIX } from './fixtures.mjs';
+import { FIX, fixtureStep } from './fixtures.mjs';
 import { readStep } from './occt.mjs';
 import { readFileSync } from 'node:fs';
 
@@ -15,7 +15,7 @@ const fix = n => new URL(`./fixtures/${n}.stp`, import.meta.url).pathname;
 test('committed fixtures are what the exporter writes (regenerate with npm run fixtures)', () => {
   for (const [k, ts] of Object.entries(FIX)) {
     const strip = s => s.replace(/FILE_NAME\([^;]*;/, '');
-    assert.equal(strip(readFileSync(fix(k), 'utf8')), strip(toStep(ts, { name: k, unit: k.endsWith('metre') ? 'm' : 'mm' })), k);
+    assert.equal(strip(readFileSync(fix(k), 'utf8')), strip(fixtureStep(k)), k);
   }
 });
 

@@ -1,9 +1,10 @@
-import { KGM3, add, scale, meshMoments, derive, eig3, openEdges, zero, richardson, MESH } from './mass.js';
+import { KGM3, add, scale, derive, eig3, zero, MESH } from './mass.js';
 import { frame, imbalance, twoPlane } from './imbalance.js';
 import { makeTool, toolMoments, valid, PARAMS, COMMON_PARAMS } from './tools.js';
 import { optimize } from './optimize.js';
 import { toStep } from './step-export.js';
 import { readDensities } from './step-meta.js';
+import { buildBodies } from './bodies.js';
 import { createView } from './view.js';
 
 const VERSION = '0.1.0-alpha', $ = s => document.querySelector(s), view = createView($('#view'));
@@ -26,20 +27,8 @@ async function loadFiles(files) {
     status(`Reading ${f.name}…`); await new Promise(r => setTimeout(r, 20));
     const passes = MESH[$('#quality').value].map(p => o.ReadStepFile(buf, { linearUnit: 'millimeter', ...p })), res = passes.at(-1);
     if (!passes.every(r => r.success)) { status(`Could not read ${f.name} (not a valid STEP?)`); continue; }
-    const two = passes.length === 2 && passes[0].meshes.length === res.meshes.length;
     let dens = []; try { dens = readDensities(new TextDecoder('latin1').decode(buf)); } catch { }
-    const one = dens.length && new Set(dens.map(d => d.density)).size === 1 ? dens[0] : null;
-    res.meshes.forEach((m, i) => {
-      const pos = m.attributes.position.array, idx = m.index.array, fine = meshMoments(pos, idx);
-      let vol = fine, unc = null;
-      if (two) { // extrapolate and keep |fine − extrapolated| as the tessellation uncertainty estimate
-        const c = passes[0].meshes[i]; vol = richardson(meshMoments(c.attributes.position.array, c.index.array), fine);
-        const a = derive(vol), b = derive(fine); unc = { dV: Math.abs(b.m - a.m) / Math.abs(a.m), dc: Math.hypot(...b.c.map((v, k) => v - a.c[k])) };
-      }
-      if (vol.m < 0) vol = scale(vol, -1);
-      const d = dens.find(x => x.product === m.name) || one;
-      st.bodies.push({ name: m.name || f.name, vol, unc, rho: d ? Math.round(d.density * 1000) / 1000 : +$('#defrho').value, src: d ? 'STEP' : 'default', material: d?.material, on: true, pos, idx, nrm: m.attributes.normal?.array, open: openEdges(pos, idx), color: m.color && (m.color[0] * 255 << 16 | m.color[1] * 255 << 8 | m.color[2] * 255) });
-    });
+    st.bodies.push(...buildBodies(passes, dens, +$('#defrho').value, f.name));
     status(`${f.name}: ${res.meshes.length} bodies`);
   }
   view.setBodies(st.bodies); view.fit(); renderBodies(); renderAxis(); update();

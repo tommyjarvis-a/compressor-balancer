@@ -1,5 +1,6 @@
 // Synthetic fixture definitions (closed-form references for the tests; no real customer parts).
 import { makeTool } from '../src/tools.js';
+import { toStep } from '../src/step-export.js';
 export const FIX = {
   box: [makeTool('prism', { name: 'box', pts: [[0, 0], [40, 0], [40, 20], [0, 20]], h: 10, x: 5, y: -3, z: 2 })],
   cylinder: [makeTool('cylinder', { name: 'cylinder', r: 15, h: 30 })],
@@ -11,4 +12,15 @@ export const FIX = {
     makeTool('sector', { name: 'lump_top', ri: 20, ro: 30, a0: 10, sweep: 30, h: 4, z: 50, rho: 7850 }),
     makeTool('sector', { name: 'lump_bot', ri: 20, ro: 30, a0: 140, sweep: 25, h: 4, z: -4, rho: 7850 }),
   ],
+  // Mixed: shaft and hub carry their own STEP density, pin has none (must fall back to the default).
+  'mixed-density': [
+    makeTool('cylinder', { name: 'shaft', r: 8, h: 60, rho: 7850 }),
+    makeTool('cylinder', { name: 'hub', r: 25, ri: 8, h: 12, z: 20, rho: 2700 }),
+    makeTool('cylinder', { name: 'pin', r: 2, h: 10, x: 15, z: 40, rho: 8900 }),
+  ],
 };
+const NODENS = { 'mixed-density': ['pin'] };
+// The exact STEP text written for fixture k (timestamp pinned so files are reproducible).
+export const fixtureStep = k => toStep(FIX[k], { name: k, unit: k.endsWith('metre') ? 'm' : 'mm', density: t => !(NODENS[k] || []).includes(t.name) })
+  .replace(/'\d{4}-\d\d-\d\dT[\d:]+'/, "'2026-01-01T00:00:00'");
+

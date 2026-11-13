@@ -1,7 +1,7 @@
 import { loops, rotMat, valid } from './tools.js';
 // Minimal AP214 (AUTOMOTIVE_DESIGN) writer: each tool becomes a MANIFOLD_SOLID_BREP made of planar
 // and cylindrical ADVANCED_FACEs (an extruded line/arc profile), in its own PRODUCT, units mm.
-// Optional density is written as a 'density' MEASURE_REPRESENTATION_ITEM (kg/m³) on the product.
+// Optional density (true, false, or a per-tool predicate) is written as a 'density' MEASURE_REPRESENTATION_ITEM (kg/m³) on the product.
 export function toStep(tools, { name = 'compressor-balancer', density = true, unit = 'mm' } = {}) {
   const L = []; let n = 0; const us = unit === 'm' ? 1e-3 : 1; // coordinates written in the file's length unit
   const E = s => (L.push(`#${++n}=${s};`), `#${n}`);
@@ -56,7 +56,7 @@ export function toStep(tools, { name = 'compressor-balancer', density = true, un
     const pd = E(`PRODUCT_DEFINITION('design','',${E(`PRODUCT_DEFINITION_FORMATION('','',${prod})`)},${pdc})`);
     const pds = E(`PRODUCT_DEFINITION_SHAPE('','',${pd})`);
     E(`SHAPE_DEFINITION_REPRESENTATION(${pds},${rep})`);
-    if (density) {
+    if (typeof density === 'function' ? density(t) : density) {
       dens ??= E(`DERIVED_UNIT((${E(`DERIVED_UNIT_ELEMENT(${E(`(MASS_UNIT()NAMED_UNIT(*)SI_UNIT(.KILO.,.GRAM.))`)},1.)`)},${E(`DERIVED_UNIT_ELEMENT(${E(`(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT($,.METRE.))`)},-3.)`)}))`);
       const pr = E(`PROPERTY_DEFINITION('material property','density',${pd})`);
       const mri = E(`MEASURE_REPRESENTATION_ITEM('density',POSITIVE_RATIO_MEASURE(${f(t.rho)}),${dens})`);
