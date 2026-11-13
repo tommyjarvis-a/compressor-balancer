@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><b>Rotating Assembly Balancer</b> <small id="ver">0.1.4-alpha</small><span id="status">Drop STEP files to start</span></header>
+<header><b>Rotating Assembly Balancer</b> <small id="ver">0.1.5-alpha</small><span id="status">Drop STEP files to start</span></header>
 <main>
 <aside id="panel">
   <section>
@@ -19,7 +19,8 @@
     <div id="cards"></div>
     <div class="row"><label title="accurate = two tessellations + Richardson extrapolation">Mass props <select id="quality"><option value="accurate" selected>accurate (2-pass)</option><option value="fast">fast</option></select></label>
       <label>Default <select id="defrho"><option value="7850">Steel 7850</option><option value="2700">Aluminium 2700</option><option value="7200">Cast iron 7200</option><option value="8900">Copper 8900</option></select> kg/m³</label></div>
-    <table id="bodies" title="Click a row (or a body in the 3-D view) to select it; Esc deselects"><thead><tr><th></th><th>Body</th><th>ρ kg/m³</th><th>Mass g</th></tr></thead><tbody></tbody></table>
+    <table id="bodies" title="Click a row (or a body in the 3-D view) to select it; Ctrl/⌘-click to add or remove, Shift-click a range; Esc deselects"><thead><tr><th></th><th>Body</th><th>ρ kg/m³</th><th>Mass g</th></tr></thead><tbody></tbody></table>
+    <div class="row cgrow"><button id="calcg">Calculate CG</button><div id="cgout" class="hint">Select one or more bodies (Ctrl-click or Shift-click to add), then Calculate CG.</div></div>
   </section>
   <section>
     <h2>2 · Spin axis &amp; residuals</h2>

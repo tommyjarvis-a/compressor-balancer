@@ -1,4 +1,4 @@
-import { KGM3, add, scale, derive, eig3, zero } from './mass.js';
+import { KGM3, add, scale, derive, eig3, zero, assemblyCG } from './mass.js';
 import { frame, imbalance, twoPlane, axisNames } from './imbalance.js';
 import { makeTool, toolMoments, valid, eulerZYX, PARAMS, COMMON_PARAMS } from './tools.js';
 import { fitCylinder, fitLoop, faceOf, makeAxis, canon } from './fit.js';
@@ -6,12 +6,12 @@ import { optimize } from './optimize.js';
 import { toStep } from './step-export.js';
 import { createView } from './view.js';
 
-const VERSION = '0.1.4-alpha', $ = s => document.querySelector(s);
+const VERSION = '0.1.5-alpha', $ = s => document.querySelector(s);
 // Without WebGL (blocked, no GPU and no software fallback) everything but the 3-D view still works.
 let view; try { view = createView($('#view')); } catch (e) {
   view = new Proxy({}, { get: () => () => null }); queueMicrotask(() => card('err', `<b>3-D view unavailable</b>: WebGL could not start (${esc(e.message)}). Mass properties, balancing and export still work; enable hardware acceleration in the browser settings for the view.`));
 }
-const st = { bodies: [], tools: [], last: null, undo: null, sel: -1, axis: { p: [0, 0, 0], d: [0, 0, 1], src: 'Z' }, pick: null };
+const st = { bodies: [], tools: [], last: null, undo: null, sel: -1, sels: [], axis: { p: [0, 0, 0], d: [0, 0, 1], src: 'Z' }, pick: null, cg: null };
 const fmt = (v, d = 3) => Math.abs(v) >= 1e5 || (v && Math.abs(v) < 1e-3) ? v.toExponential(d - 1) : (+v.toFixed(d)).toString();
 const status = s => $('#status').textContent = s;
 
@@ -48,9 +48,10 @@ let busy = false;
 async function loadFiles(files) {
   if (busy) return status('An import is already running — cancel it first');
   busy = true;
+  let loadedSession = false;
   try {
     for (const f of files) {
-      if (/\.json$/i.test(f.name)) { loadSession(JSON.parse(await f.text())); continue; }
+      if (/\.json$/i.test(f.name)) { loadSession(JSON.parse(await f.text())); loadedSession = true; continue; }
       let r;
       try { r = await runImport(f, await f.arrayBuffer()); }
       catch (e) { if (e.cancelled) { status(`${f.name}: import cancelled`); break; } card('err', `<b>Could not import ${esc(f.name)}</b>: ${esc(e.message)}`); status(`${f.name}: import failed`); continue; }
@@ -61,7 +62,10 @@ async function loadFiles(files) {
       status(`${f.name}: ${r.bodies.length} bodies · ${s.mode} · ${(s.tris / 1e3).toFixed(0)}k triangles · ${(s.ms / 1000).toFixed(1)} s` + (nrem ? ` (${nrem} REMOVE_ solid${nrem > 1 ? 's' : ''} counted as material removal, negative mass)` : ''));
     }
   } finally { busy = false; }
-  st.sel = -1; view.setBodies(st.bodies); view.fit(); renderBodies(); renderAxis(); update();
+  // A session restore already set selection and CG; do not clear them (and do not re-fit, which would jump the camera).
+  if (!loadedSession) { st.sel = -1; st.sels = []; }
+  view.setBodies(st.bodies); if (!loadedSession) view.fit(); renderBodies(); renderAxis(); update();
+  if (loadedSession) { view.select(st.sels); renderCG(); }
 }
 
 // ---------- state → numbers ----------
@@ -120,13 +124,14 @@ function update() {
   const com = tot.m ? tot.M1.map(v => v / tot.m) : [0, 0, 0];
   view.setMarks(r1, fr, com, sp);
   $('#dhat').textContent = `û (${st.axis.d.map(v => fmt(v, 5)).join(', ')})`;
+  touchCG();
   return { fr, base, r0, r1, sp };
 }
 
 // ---------- UI ----------
 const srcText = b => `${b.sign < 0 ? 'removal (−m) · ' : ''}${b.src}${b.material ? ' · ' + esc(b.material) : ''} · V ${fmt(b.vol.m)} mm³${b.unc ? ` · ${b.unc.rough ? '~' : ''}±${fmt(b.unc.dc * 1000, 2)} µm CoM` : ''}`;
 function renderBodies() {
-  $('#bodies tbody').innerHTML = st.bodies.map((b, i) => `<tr data-row="${i}" class="${i === st.sel ? 'sel' : ''}"><td><input type="checkbox" data-on="${i}" ${b.on ? 'checked' : ''}></td>
+  $('#bodies tbody').innerHTML = st.bodies.map((b, i) => `<tr data-row="${i}" class="${st.sels.includes(i) ? 'sel' : ''}"><td><input type="checkbox" data-on="${i}" ${b.on ? 'checked' : ''}></td>
     <td>${esc(b.name)}${b.unreliable ? ` <span class="bad" title="${b.open} open/non-manifold edges (${pct(b.frac)} of edges), volume closure error ${fmt(b.eps, 2)}: mesh not closed, mass properties unreliable">⚠</span>` : b.open ? ` <span class="note" title="${b.open} open/non-manifold edges (${pct(b.frac)} of edges) but the mesh closes (volume closure error ${fmt(b.eps, 2)} ≤ 1e-4): mass properties OK">ⓘ</span>` : ''}<div class="src" data-src="${i}">${srcText(b)}</div></td>
     <td><input type="number" step="any" data-rho="${i}" value="${b.rho}"></td><td data-mass="${i}">${fmt(bmass(b))}</td></tr>`).join('');
 }
@@ -135,10 +140,18 @@ function renderAxis() {
   $('#axis').value = [...$('#axis').options].some(o => o.value === st.axis.src) ? st.axis.src : 'C';
 }
 // ---------- selection (list ⇄ 3-D view) and axis picking ----------
-function select(i, from) {
-  st.sel = i; view.select(i);
-  document.querySelectorAll('#bodies tr[data-row]').forEach(r => r.classList.toggle('sel', +r.dataset.row === i));
+function select(i, from, ev) {
+  if (i < 0) { st.sel = -1; st.sels = []; }
+  else if (ev && ev.shiftKey && st.sel >= 0) {
+    const a = Math.min(st.sel, i), b = Math.max(st.sel, i); st.sels = []; for (let k = a; k <= b; k++) st.sels.push(k); st.sel = i;
+  } else if (ev && (ev.ctrlKey || ev.metaKey)) {
+    const ix = st.sels.indexOf(i); if (ix >= 0) st.sels.splice(ix, 1); else st.sels.push(i);
+    st.sel = st.sels.includes(i) ? i : (st.sels.at(-1) ?? -1);
+  } else { st.sel = i; st.sels = [i]; }
+  view.select(st.sels);
+  document.querySelectorAll('#bodies tr[data-row]').forEach(r => r.classList.toggle('sel', st.sels.includes(+r.dataset.row)));
   if (i >= 0 && from === 'view') { document.querySelector(`#bodies tr[data-row="${i}"]`)?.scrollIntoView({ block: 'nearest' }); status(`Selected ${st.bodies[i].name}`); }
+  touchCG();
 }
 const PICK = { cyl: 'click a cylindrical face', loop: 'click a face next to a circular edge (hole, boss, end face)', pts: 'click the first point' };
 function pickUI() { document.querySelectorAll('[data-pick]').forEach(b => b.classList.toggle('on', b.dataset.pick === st.pick?.mode)); view.cursor(st.pick ? 'crosshair' : ''); }
@@ -160,7 +173,7 @@ function onPick(hit) {
   const t = pk.mode === 'cyl' ? hit.point.reduce((a, v, k) => a + (v - r.p[k]) * r.d[k], 0) : 0, p = r.p.map((v, k) => v + t * r.d[k]);
   setAxis({ p, d: r.d }, 'C', `${pk.mode === 'cyl' ? 'cylinder' : 'circular edge'} of ${b.name}: r = ${fmt(r.r, 4)} mm, fit RMS ${fmt(100 * r.rms, 2)} % of r`);
 }
-view.onClick(hit => st.pick ? onPick(hit) : select(hit ? hit.body : -1, 'view'));
+view.onClick((hit, e) => st.pick ? onPick(hit) : select(hit ? hit.body : -1, 'view', e));
 document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (st.pick) { st.pick = null; view.setPicks([]); pickUI(); axmsg('Pick cancelled'); } else select(-1); });
 const LABEL = { h: 'h', x: 'x', y: 'y', z: 'z', rx: 'rx°', ry: 'ry°', rz: 'rz°', rho: 'ρ', r: 'r', ri: 'ri', ro: 'ro', a0: 'a0°', sweep: 'sw°', sc: 'scale' };
 function renderTools() {
@@ -201,7 +214,10 @@ $('#panel').addEventListener('focusout', e => { if (/^[od][xyz]$/.test(e.target.
 $('#panel').addEventListener('keydown', e => { if (e.key === 'Enter' && /^[od][xyz]$/.test(e.target.id)) typedAxis(); });
 $('#panel').addEventListener('click', e => {
   const el = e.target, row = el.closest('#bodies tr[data-row]');
-  if (row && !el.closest('input')) select(+row.dataset.row === st.sel ? -1 : +row.dataset.row, 'list');
+  if (row && !el.closest('input')) {
+    const i = +row.dataset.row, mod = e.ctrlKey || e.metaKey || e.shiftKey;
+    if (!mod && i === st.sel && st.sels.length === 1) select(-1, 'list', e); else select(i, 'list', e);
+  }
   if (el.dataset.pick) startPick(el.dataset.pick);
   if (el.dataset.add) {
     // new tools sit on the spin axis (local z = w) at an end of the span; a cylinder 30 mm off-axis along u
@@ -216,6 +232,7 @@ $('#panel').addEventListener('click', e => {
   if (el.dataset.exp) exportAs(el.dataset.exp);
   if (el.id === 'undo' && st.undo) { st.tools = st.undo; st.undo = null; el.disabled = true; renderTools(); update(); $('#optout').textContent = 'Reverted.'; }
   if (el.id === 'run') runOpt();
+  if (el.id === 'calcg') calcCG();
   if (el.id === 'cancel') job?.cancel();
 });
 
@@ -236,6 +253,38 @@ function runOpt() {
   renderTools(); update();
 }
 
+
+// ---------- assembly CG (mass-weighted CoM of the current list/view selection) ----------
+// Stale handling: the result and marker stay visible after a calculation; if the selection, a density,
+// or the body set then changes, the readout and marker are marked stale until Calculate CG is clicked again.
+const cgKey = () => st.sels.map(i => { const b = st.bodies[i]; return b ? `${i}:${b.name}:${b.rho}:${b.sign}:${b.vol.m}` : i + ':?'; }).join(',') + '#' + st.bodies.length;
+function touchCG() {
+  if (!st.cg || st.cg.error) return;
+  const stale = st.cg.key !== cgKey();
+  if (stale !== !!st.cg.stale) { st.cg.stale = stale; renderCG(); }
+}
+function calcCG() {
+  const r = assemblyCG(st.bodies, st.sels);
+  st.cg = r.error ? r : { ...r, key: cgKey(), stale: false };
+  renderCG();
+}
+function renderCG() {
+  const el = $('#cgout'), r = st.cg;
+  if (!r || r.error === 'none') {
+    el.className = 'hint'; el.textContent = r?.error === 'none' ? 'No bodies selected — select one or more in the list or the 3-D view, then Calculate CG.' : 'Select one or more bodies (Ctrl-click or Shift-click to add), then Calculate CG.';
+    view.setAssemblyCG(null); return;
+  }
+  if (r.error) {
+    el.className = 'hint bad'; el.textContent = r.error === 'negative' ? 'Net mass is negative — cannot compute a centre of gravity.' : 'Net mass is zero — cannot compute a centre of gravity.';
+    view.setAssemblyCG(null); return;
+  }
+  el.className = 'cgout' + (r.stale ? ' stale' : '');
+  el.innerHTML = `${r.stale ? '<span class="tag">stale</span> ' : ''}<b>Assembly CG</b> · <span id="cgn">${r.n}</span> bod${r.n === 1 ? 'y' : 'ies'} · <span id="cgm">${fmt(r.m)}</span> g
+    <div class="xyz"><span>X</span><b id="cgx">${fmt(r.c[0])}</b><span>mm</span><span>Y</span><b id="cgy">${fmt(r.c[1])}</b><span>mm</span><span>Z</span><b id="cgz">${fmt(r.c[2])}</b><span>mm</span></div>
+    <div class="src">from WCS origin (0, 0, 0)${r.stale ? ' — selection, density or bodies changed; click Calculate CG to refresh' : ''}</div>`;
+  view.setAssemblyCG(r.c, r.stale);
+}
+
 // ---------- export / session ----------
 function save(name, text, type) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1e4); }
 const resRows = (r, an) => [[`residual`, `U${an.n[0]} g.mm`, r.U[0]], ['residual', `U${an.n[1]} g.mm`, r.U[1]], ['residual', `C${an.n[0]} g.mm2`, r.C[0]], ['residual', `C${an.n[1]} g.mm2`, r.C[1]],
@@ -246,11 +295,13 @@ const resJson = (r, an) => ({ components: an.n, basis: { u: an.u, v: an.v, w: an
 function exportAs(kind) {
   const { fr, r1 } = update();
   if (kind === 'step') return st.tools.some(t => valid(t) && t.sign > 0) || st.tools.some(valid) ? save('counterweights.stp', toStep(st.tools), 'application/step') : status('No valid tools to export');
+  const cgRows = st.cg && !st.cg.error ? [['assembly CG', 'X mm', st.cg.c[0]], ['assembly CG', 'Y mm', st.cg.c[1]], ['assembly CG', 'Z mm', st.cg.c[2]], ['assembly CG', 'mass g', st.cg.m], ['assembly CG', 'bodies', st.cg.names.join(';')], ['assembly CG', 'stale', !!st.cg.stale]] : [];
   if (kind === 'csv') return save('counterweights.csv', 'tool,kind,role,sign,removal,param,value\n' + st.tools.flatMap(t => [...PARAMS[t.kind], ...COMMON_PARAMS].map(k => [t.name, t.kind, t.role, t.sign, t.sign < 0, k, t[k]].join(','))).join('\n') +
-    `\n\n${resRows(r1, axisNames(fr)).map(r => r.join(',')).join('\n')}\n`, 'text/csv');
+    `\n\n${resRows(r1, axisNames(fr)).map(r => r.join(',')).join('\n')}${cgRows.length ? '\n' + cgRows.map(r => r.join(',')).join('\n') : ''}\n`, 'text/csv');
+  const assemblyCGJson = st.cg && !st.cg.error ? { c: st.cg.c, mass: st.cg.m, count: st.cg.n, bodies: st.cg.names, stale: !!st.cg.stale, note: 'mass-weighted CoM of the named bodies, mm from WCS origin 0,0,0' } : undefined;
   save('balance-session.json', JSON.stringify({ app: 'rotating-assembly-balancer', version: VERSION, units: { length: 'mm', mass: 'g', density: 'kg/m3' },
     axis: axisJson(axisNames(fr)), bodies: st.bodies.map(b => ({ name: b.name, on: b.on, rho: b.rho, src: b.src, removal: b.sign < 0, mass: bmass(b) })),
-    tools: st.tools.map(t => ({ ...t, removal: t.sign < 0 })), residual: resJson(r1, axisNames(fr)), optimisation: st.last }, null, 1), 'application/json');
+    tools: st.tools.map(t => ({ ...t, removal: t.sign < 0 })), residual: resJson(r1, axisNames(fr)), assemblyCG: assemblyCGJson, optimisation: st.last }, null, 1), 'application/json');
 }
 function loadSession(j) {
   if (!Array.isArray(j.tools)) return status('JSON has no tools[]');
@@ -259,6 +310,14 @@ function loadSession(j) {
   renderBodies(); renderTools(); renderAxis();
   const ax = j.axis || {}, a = makeAxis(ax.point || ax.origin || [0, 0, 0], ax.direction || ax.R?.slice(6, 9) || [0, 0, 1]); // 0.1.x sessions: origin + R
   const src = ax.source ?? ax.choice; if (!a.error) setAxis(a, PRESET[src] || (src?.[0] === 'P' && st.bodies[+src.slice(1)]) ? src : 'C'); else update();
+  if (j.assemblyCG && Array.isArray(j.assemblyCG.c)) {
+    const names = j.assemblyCG.bodies || [];
+    st.sels = names.map(n => st.bodies.findIndex(b => b.name === n)).filter(i => i >= 0);
+    st.sel = st.sels.at(-1) ?? -1; view.select(st.sels);
+    document.querySelectorAll('#bodies tr[data-row]').forEach(r => r.classList.toggle('sel', st.sels.includes(+r.dataset.row)));
+    st.cg = { c: j.assemblyCG.c, m: j.assemblyCG.mass, n: j.assemblyCG.count ?? st.sels.length, names, indices: st.sels, key: cgKey(), stale: false };
+    st.cg.stale = st.cg.key !== cgKey() || st.sels.length !== names.length; renderCG();
+  }
   status('Session loaded');
 }
 

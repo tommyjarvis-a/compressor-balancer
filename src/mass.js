@@ -2,6 +2,7 @@
 // (about the world origin). Moments add linearly, so assemblies are plain sums.
 // Units: mm, g, density in kg/m³ (×1e-6 → g/mm³).
 export const KGM3 = 1e-6;
+export const CG_MIN_MASS = 1e-12; // g; net mass at or below this (or negative) has no unique CG
 export const zero = () => ({ m: 0, M1: [0, 0, 0], S: [0, 0, 0, 0, 0, 0, 0, 0, 0] });
 
 export function add(a, b, k = 1) {
@@ -108,3 +109,15 @@ export function meshCheck(pos, idx, V) {
 export const richardson = (coarse, fine) => add(scale(fine, 4 / 3), coarse, -1 / 3);
 export const MESH = { fast: [{ linearDeflectionType: 'bounding_box_ratio', linearDeflection: 1e-4, angularDeflection: 0.05 }],
   accurate: [{ linearDeflectionType: 'bounding_box_ratio', linearDeflection: 1e-4, angularDeflection: 0.02 }, { linearDeflectionType: 'bounding_box_ratio', linearDeflection: 2.5e-5, angularDeflection: 0.01 }] };
+
+// Mass-weighted centre of gravity of a subset of bodies (REMOVE_* already carry sign −1).
+// indices: selected body indexes. Returns {c, m, n, names, indices} or {error, ...}.
+// error: 'none' (empty selection), 'zero' / 'negative' (net mass ≤ 0).
+export function assemblyCG(bodies, indices) {
+  const idx = [...new Set(indices)].filter(i => Number.isInteger(i) && i >= 0 && i < bodies.length);
+  if (!idx.length) return { error: 'none', n: 0, names: [], indices: [] };
+  const tot = idx.reduce((a, i) => add(a, scale(bodies[i].vol, bodies[i].sign * bodies[i].rho * KGM3)), zero());
+  const names = idx.map(i => bodies[i].name);
+  if (!(tot.m > CG_MIN_MASS)) return { error: tot.m < 0 ? 'negative' : 'zero', m: tot.m, n: idx.length, names, indices: idx };
+  return { c: tot.M1.map(v => v / tot.m), m: tot.m, n: idx.length, names, indices: idx };
+}
