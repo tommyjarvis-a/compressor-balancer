@@ -18,9 +18,9 @@ export function createView(el) {
     setBodies(list) {
       clear(bodies);
       for (const b of list) {
-        const g = new BufferGeometry(); g.setAttribute('position', new BufferAttribute(new Float32Array(b.pos), 3));
-        if (b.nrm) g.setAttribute('normal', new BufferAttribute(new Float32Array(b.nrm), 3)); else g.computeVertexNormals();
-        g.setIndex(new BufferAttribute(new Uint32Array(b.idx), 1));
+        const g = new BufferGeometry(); g.setAttribute('position', new BufferAttribute(b.pos instanceof Float32Array ? b.pos : new Float32Array(b.pos), 3));
+        if (b.nrm) g.setAttribute('normal', new BufferAttribute(b.nrm instanceof Float32Array ? b.nrm : new Float32Array(b.nrm), 3)); else g.computeVertexNormals();
+        g.setIndex(new BufferAttribute(b.idx instanceof Uint32Array ? b.idx : new Uint32Array(b.idx), 1));
         const m = new Mesh(g, new MeshStandardMaterial({ color: b.color || 0x9aa4b2, metalness: 0.3, roughness: 0.6, transparent: true, opacity: 0.85 }));
         m.visible = b.on; bodies.add(m);
       }

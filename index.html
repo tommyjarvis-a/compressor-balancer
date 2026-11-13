@@ -15,6 +15,8 @@
     <h2>1 · Import</h2>
     <label id="drop" class="drop">Drop STEP (.stp/.step) or session .json here, or <u>browse</u>
       <input id="file" type="file" accept=".stp,.step,.json" multiple hidden></label>
+    <div id="job" class="card info" hidden><span id="jobmsg"></span> <button id="cancel">Cancel</button></div>
+    <div id="cards"></div>
     <div class="row"><label title="accurate = two tessellations + Richardson extrapolation">Mass props <select id="quality"><option value="accurate" selected>accurate (2-pass)</option><option value="fast">fast</option></select></label>
       <label>Default <select id="defrho"><option value="7850">Steel 7850</option><option value="2700">Aluminium 2700</option><option value="7200">Cast iron 7200</option><option value="8900">Copper 8900</option></select> kg/m³</label></div>
     <table id="bodies"><thead><tr><th></th><th>Body</th><th>ρ kg/m³</th><th>Mass g</th></tr></thead><tbody></tbody></table>

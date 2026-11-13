@@ -76,10 +76,10 @@ export function openEdges(pos, idx, tol = 1e-6) {
     const key = Math.round(pos[i] * q) + ',' + Math.round(pos[i + 1] * q) + ',' + Math.round(pos[i + 2] * q);
     if (!id.has(key)) id.set(key, id.size); w.push(id.get(key));
   }
-  const e = new Map();
+  const e = new Map(), N = id.size;
   for (let t = 0; t < idx.length; t += 3) for (let k = 0; k < 3; k++) {
     const a = w[idx[t + k]], b = w[idx[t + (k + 1) % 3]]; if (a === b) continue;
-    const key = a < b ? a + '_' + b : b + '_' + a; e.set(key, (e.get(key) || 0) + (a < b ? 1 : -1) + 1000);
+    const key = a < b ? a * N + b : b * N + a; e.set(key, (e.get(key) || 0) + (a < b ? 1 : -1) + 1000);
   }
   let bad = 0; for (const v of e.values()) if (v !== 2000) bad++;
   return bad;

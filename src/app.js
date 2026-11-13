@@ -1,10 +1,8 @@
-import { KGM3, add, scale, derive, eig3, zero, MESH } from './mass.js';
+import { KGM3, add, scale, derive, eig3, zero } from './mass.js';
 import { frame, imbalance, twoPlane, axisNames } from './imbalance.js';
 import { makeTool, toolMoments, valid, PARAMS, COMMON_PARAMS } from './tools.js';
 import { optimize } from './optimize.js';
 import { toStep } from './step-export.js';
-import { readDensities } from './step-meta.js';
-import { buildBodies } from './bodies.js';
 import { createView } from './view.js';
 
 const VERSION = '0.1.1-alpha', $ = s => document.querySelector(s), view = createView($('#view'));
@@ -12,26 +10,51 @@ const st = { bodies: [], tools: [], last: null, undo: null };
 const fmt = (v, d = 3) => Math.abs(v) >= 1e5 || (v && Math.abs(v) < 1e-3) ? v.toExponential(d - 1) : (+v.toFixed(d)).toString();
 const status = s => $('#status').textContent = s;
 
-// ---------- STEP import (occt-import-js, loaded on first use) ----------
-let occtP;
-const occt = () => occtP ??= new Promise((res, rej) => {
-  const s = document.createElement('script'); s.src = 'vendor/occt-import-js/occt-import-js.js';
-  s.onload = () => globalThis.occtimportjs({ locateFile: f => 'vendor/occt-import-js/' + f }).then(res, rej); s.onerror = rej; document.head.append(s);
-});
+// ---------- STEP import: one module worker per file (occt-import-js WASM, meshing, mass properties) ----------
+const WASM_URL = new URL('../vendor/occt-import-js/occt-import-js.wasm', import.meta.url), TIMEOUT_S = +new URLSearchParams(location.search).get('timeout') || 180; // ?timeout=s for testing
+let wasmP, job = null;
+const compileWasm = () => wasmP ??= (WebAssembly.compileStreaming ? WebAssembly.compileStreaming(fetch(WASM_URL)) : fetch(WASM_URL).then(r => r.arrayBuffer()).then(b => WebAssembly.compile(b)))
+  .catch(e => { wasmP = null; throw e; });
+function card(kind, html) { const el = $('#cards'), d = document.createElement('div'); d.className = 'card ' + kind; d.innerHTML = html + ' <button class="x" title="Dismiss">✕</button>'; d.querySelector('.x').onclick = () => d.remove(); el.append(d); }
+function runImport(f, buf) {
+  return new Promise((resolve, reject) => {
+    const w = new Worker(new URL('./import-worker.js', import.meta.url), { type: 'module' }), t0 = performance.now();
+    let stage = 'Starting', done = false;
+    const finish = (fn, v) => { if (done) return; done = true; clearInterval(tick); w.terminate(); job = null; $('#job').hidden = true; fn(v); };
+    const tick = setInterval(() => {
+      const s = (performance.now() - t0) / 1000;
+      $('#jobmsg').textContent = `${f.name}: ${stage}… ${s.toFixed(0)} s`;
+      if (s > TIMEOUT_S) finish(reject, new Error(`timed out after ${TIMEOUT_S} s (${stage}). Try "fast" mass props, or export fewer/simpler bodies.`));
+    }, 250);
+    job = { cancel: () => finish(reject, Object.assign(new Error('cancelled'), { cancelled: true })) };
+    $('#job').hidden = false; $('#jobmsg').textContent = `${f.name}: starting…`;
+    w.onmessage = ({ data: d }) => {
+      if (d.type === 'progress') stage = d.stage;
+      else if (d.type === 'done') finish(resolve, d);
+      else if (d.type === 'error') finish(reject, new Error(d.message));
+    };
+    w.onerror = e => { e.preventDefault?.(); finish(reject, new Error(e.message || 'import worker failed (out of memory?)')); };
+    compileWasm().then(wasm => w.postMessage({ buf, name: f.name, mode: $('#quality').value, defRho: +$('#defrho').value, wasm }, [buf]),
+      e => finish(reject, new Error('could not load OpenCascade WASM: ' + e.message)));
+  });
+}
 
+let busy = false;
 async function loadFiles(files) {
-  for (const f of files) {
-    if (/\.json$/i.test(f.name)) { loadSession(JSON.parse(await f.text())); continue; }
-    status(`Loading OpenCascade… (${f.name})`);
-    const o = await occt(), buf = new Uint8Array(await f.arrayBuffer());
-    status(`Reading ${f.name}…`); await new Promise(r => setTimeout(r, 20));
-    const passes = MESH[$('#quality').value].map(p => o.ReadStepFile(buf, { linearUnit: 'millimeter', ...p })), res = passes.at(-1);
-    if (!passes.every(r => r.success)) { status(`Could not read ${f.name} (not a valid STEP?)`); continue; }
-    let dens = []; try { dens = readDensities(new TextDecoder('latin1').decode(buf)); } catch { }
-    st.bodies.push(...buildBodies(passes, dens, +$('#defrho').value, f.name));
-    const nrem = st.bodies.filter(b => b.sign < 0 && b.file === f.name).length;
-    status(`${f.name}: ${res.meshes.length} bodies` + (nrem ? ` (${nrem} REMOVE_ solid${nrem > 1 ? 's' : ''} counted as material removal, negative mass)` : ''));
-  }
+  if (busy) return status('An import is already running — cancel it first');
+  busy = true;
+  try {
+    for (const f of files) {
+      if (/\.json$/i.test(f.name)) { loadSession(JSON.parse(await f.text())); continue; }
+      let r;
+      try { r = await runImport(f, await f.arrayBuffer()); }
+      catch (e) { if (e.cancelled) { status(`${f.name}: import cancelled`); break; } card('err', `<b>Could not import ${esc(f.name)}</b>: ${esc(e.message)}`); status(`${f.name}: import failed`); continue; }
+      st.bodies.push(...r.bodies);
+      for (const w of r.warn) card('warn', `${esc(f.name)}: ${esc(w)}`);
+      const nrem = r.bodies.filter(b => b.sign < 0).length, s = r.stats;
+      status(`${f.name}: ${r.bodies.length} bodies · ${s.mode} · ${(s.tris / 1e3).toFixed(0)}k triangles · ${(s.ms / 1000).toFixed(1)} s` + (nrem ? ` (${nrem} REMOVE_ solid${nrem > 1 ? 's' : ''} counted as material removal, negative mass)` : ''));
+    }
+  } finally { busy = false; }
   view.setBodies(st.bodies); view.fit(); renderBodies(); renderAxis(); update();
 }
 
@@ -132,6 +155,7 @@ $('#panel').addEventListener('click', e => {
   if (el.dataset.exp) exportAs(el.dataset.exp);
   if (el.id === 'undo' && st.undo) { st.tools = st.undo; st.undo = null; el.disabled = true; renderTools(); update(); $('#optout').textContent = 'Reverted.'; }
   if (el.id === 'run') runOpt();
+  if (el.id === 'cancel') job?.cancel();
 });
 
 function runOpt() {
