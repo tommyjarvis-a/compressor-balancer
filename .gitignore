@@ -1,0 +1,6 @@
+node_modules/
+.DS_Store
+*.log
+# never commit real customer/NX parts: keep them outside the repo or here
+private/
+*.prt
