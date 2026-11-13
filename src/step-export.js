@@ -2,7 +2,7 @@ import { loops, rotMat, valid } from './tools.js';
 // Minimal AP214 (AUTOMOTIVE_DESIGN) writer: each tool becomes a MANIFOLD_SOLID_BREP made of planar
 // and cylindrical ADVANCED_FACEs (an extruded line/arc profile), in its own PRODUCT, units mm.
 // Optional density (true, false, or a per-tool predicate) is written as a 'density' MEASURE_REPRESENTATION_ITEM (kg/m³) on the product.
-export function toStep(tools, { name = 'compressor-balancer', density = true, unit = 'mm' } = {}) {
+export function toStep(tools, { name = 'rotating-assembly-balancer', density = true, unit = 'mm' } = {}) {
   const L = []; let n = 0; const us = unit === 'm' ? 1e-3 : 1; // coordinates written in the file's length unit
   const E = s => (L.push(`#${++n}=${s};`), `#${n}`);
   const f = v => { const s = (Math.abs(v) < 1e-12 ? 0 : v).toPrecision(15).replace(/0+$/, '').replace(/\.$/, '.'); return s.includes('.') || s.includes('e') ? s.replace('e', 'E') : s + '.'; };
@@ -64,5 +64,5 @@ export function toStep(tools, { name = 'compressor-balancer', density = true, un
     }
   }
   const ts = new Date().toISOString().slice(0, 19);
-  return `ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('${name} counterweights'),'2;1');\nFILE_NAME('${name}.stp','${ts}',(''),(''),'compressor-balancer','compressor-balancer','');\nFILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\nENDSEC;\nDATA;\n${L.join('\n')}\nENDSEC;\nEND-ISO-10303-21;\n`;
+  return `ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('${name} counterweights'),'2;1');\nFILE_NAME('${name}.stp','${ts}',(''),(''),'rotating-assembly-balancer','rotating-assembly-balancer','');\nFILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\nENDSEC;\nDATA;\n${L.join('\n')}\nENDSEC;\nEND-ISO-10303-21;\n`;
 }

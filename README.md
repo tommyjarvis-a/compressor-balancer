@@ -1,7 +1,8 @@
-# Compressor Balancer
+# Rotating Assembly Balancer
 
-Client-side (no backend) web app for mass properties and **two-plane balancing** of electric automotive
-AC-compressor rotating assemblies (rotor, shaft, scroll/swash parts, counterweights, swing links).
+Client-side (no backend) web app for mass properties and **two-plane balancing** of rotating assemblies —
+rotors, shafts, crank/eccentric parts, counterweights, swing links. Electric automotive AC-compressor rotating
+assemblies (rotor, shaft, scroll/swash parts) are one example.
 Drop STEP solids in, pick the spin axis, add parametric counterweights, let the optimiser drive the residual
 static and couple imbalance to ~0, and export the suggested geometry as STEP or a parameter list.
 

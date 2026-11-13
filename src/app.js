@@ -186,7 +186,7 @@ function exportAs(kind) {
   if (kind === 'step') return st.tools.some(t => valid(t) && t.sign > 0) || st.tools.some(valid) ? save('counterweights.stp', toStep(st.tools), 'application/step') : status('No valid tools to export');
   if (kind === 'csv') return save('counterweights.csv', 'tool,kind,role,sign,removal,param,value\n' + st.tools.flatMap(t => [...PARAMS[t.kind], ...COMMON_PARAMS].map(k => [t.name, t.kind, t.role, t.sign, t.sign < 0, k, t[k]].join(','))).join('\n') +
     `\n\n${resRows(r1, axisNames(fr)).map(r => r.join(',')).join('\n')}\n`, 'text/csv');
-  save('balance-session.json', JSON.stringify({ app: 'compressor-balancer', version: VERSION, units: { length: 'mm', mass: 'g', density: 'kg/m3' },
+  save('balance-session.json', JSON.stringify({ app: 'rotating-assembly-balancer', version: VERSION, units: { length: 'mm', mass: 'g', density: 'kg/m3' },
     axis: { origin: fr.o, R: fr.R, choice: $('#axis').value }, bodies: st.bodies.map(b => ({ name: b.name, on: b.on, rho: b.rho, src: b.src, removal: b.sign < 0, mass: bmass(b) })),
     tools: st.tools.map(t => ({ ...t, removal: t.sign < 0 })), residual: resJson(r1, axisNames(fr)), optimisation: st.last }, null, 1), 'application/json');
 }
