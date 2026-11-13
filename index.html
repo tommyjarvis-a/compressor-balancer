@@ -20,8 +20,15 @@
     <table id="bodies"><thead><tr><th></th><th>Body</th><th>ρ kg/m³</th><th>Mass g</th></tr></thead><tbody></tbody></table>
   </section>
   <section>
-    <h2>2 · Mass properties</h2>
+    <h2>2 · Spin axis &amp; residuals</h2>
+    <div class="row"><label>Axis <select id="axis"></select></label>
+      <label>Origin <input id="ox" type="number" value="0" step="any"> <input id="oy" type="number" value="0" step="any"> <input id="oz" type="number" value="0" step="any"></label></div>
     <div id="resid" class="resid"></div>
+  </section>
+  <section>
+    <h2>3 · Correction tools</h2>
+    <div class="row"><button data-add="sector">+ Sector</button><button data-add="cylinder">+ Cylinder</button><button data-add="prism">+ Profile</button></div>
+    <div id="tools"></div>
   </section>
   <footer>Client-side only — files never leave this browser. <a href="THIRD_PARTY.md">Licenses</a> · <a href="https://github.com/kovacsv/occt-import-js">occt-import-js source</a></footer>
 </aside>
