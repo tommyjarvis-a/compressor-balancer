@@ -1,4 +1,5 @@
 import { KGM3, add, scale, derive, eig3, zero, assemblyCG } from './mass.js';
+import { uniqueNames, bodyRef, asSaved, matchBodies } from './bodies.js';
 import { frame, imbalance, twoPlane, axisNames } from './imbalance.js';
 import { makeTool, toolMoments, valid, eulerZYX, PARAMS, COMMON_PARAMS } from './tools.js';
 import { fitCylinder, fitLoop, faceOf, makeAxis, canon } from './fit.js';
@@ -6,7 +7,7 @@ import { optimize } from './optimize.js';
 import { toStep } from './step-export.js';
 import { createView } from './view.js';
 
-const VERSION = '0.1.5-alpha', $ = s => document.querySelector(s);
+const VERSION = '0.1.6-alpha', $ = s => document.querySelector(s);
 // Without WebGL (blocked, no GPU and no software fallback) everything but the 3-D view still works.
 let view; try { view = createView($('#view')); } catch (e) {
   view = new Proxy({}, { get: () => () => null }); queueMicrotask(() => card('err', `<b>3-D view unavailable</b>: WebGL could not start (${esc(e.message)}). Mass properties, balancing and export still work; enable hardware acceleration in the browser settings for the view.`));
@@ -55,7 +56,7 @@ async function loadFiles(files) {
       let r;
       try { r = await runImport(f, await f.arrayBuffer()); }
       catch (e) { if (e.cancelled) { status(`${f.name}: import cancelled`); break; } card('err', `<b>Could not import ${esc(f.name)}</b>: ${esc(e.message)}`); status(`${f.name}: import failed`); continue; }
-      st.bodies.push(...r.bodies);
+      uniqueNames(r.bodies, st.bodies); st.bodies.push(...r.bodies);
       for (const w of r.warn) card('warn', `${esc(f.name)}: ${esc(w)}`);
       for (const w of r.info) card('info quiet', `${esc(f.name)}: ${esc(w)}`);
       const nrem = r.bodies.filter(b => b.sign < 0).length, s = r.stats;
@@ -281,7 +282,7 @@ function renderCG() {
   el.className = 'cgout' + (r.stale ? ' stale' : '');
   el.innerHTML = `${r.stale ? '<span class="tag">stale</span> ' : ''}<b>Assembly CG</b> · <span id="cgn">${r.n}</span> bod${r.n === 1 ? 'y' : 'ies'} · <span id="cgm">${fmt(r.m)}</span> g
     <div class="xyz"><span>X</span><b id="cgx">${fmt(r.c[0])}</b><span>mm</span><span>Y</span><b id="cgy">${fmt(r.c[1])}</b><span>mm</span><span>Z</span><b id="cgz">${fmt(r.c[2])}</b><span>mm</span></div>
-    <div class="src">from WCS origin (0, 0, 0)${r.stale ? ' — selection, density or bodies changed; click Calculate CG to refresh' : ''}</div>`;
+    <div class="src">from WCS origin (0, 0, 0)${r.stale ? ' — selection, density or bodies changed; click Calculate CG to refresh' : ''}${r.notice ? ' — ' + esc(r.notice) : ''}</div>`;
   view.setAssemblyCG(r.c, r.stale);
 }
 
@@ -298,25 +299,33 @@ function exportAs(kind) {
   const cgRows = st.cg && !st.cg.error ? [['assembly CG', 'X mm', st.cg.c[0]], ['assembly CG', 'Y mm', st.cg.c[1]], ['assembly CG', 'Z mm', st.cg.c[2]], ['assembly CG', 'mass g', st.cg.m], ['assembly CG', 'bodies', st.cg.names.join(';')], ['assembly CG', 'stale', !!st.cg.stale]] : [];
   if (kind === 'csv') return save('counterweights.csv', 'tool,kind,role,sign,removal,param,value\n' + st.tools.flatMap(t => [...PARAMS[t.kind], ...COMMON_PARAMS].map(k => [t.name, t.kind, t.role, t.sign, t.sign < 0, k, t[k]].join(','))).join('\n') +
     `\n\n${resRows(r1, axisNames(fr)).map(r => r.join(',')).join('\n')}${cgRows.length ? '\n' + cgRows.map(r => r.join(',')).join('\n') : ''}\n`, 'text/csv');
-  const assemblyCGJson = st.cg && !st.cg.error ? { c: st.cg.c, mass: st.cg.m, count: st.cg.n, bodies: st.cg.names, stale: !!st.cg.stale, note: 'mass-weighted CoM of the named bodies, mm from WCS origin 0,0,0' } : undefined;
+  const assemblyCGJson = st.cg && !st.cg.error ? { c: st.cg.c, mass: st.cg.m, count: st.cg.n, bodies: (st.cg.indices || st.sels).map(i => bodyRef(st.bodies[i], i)), stale: !!st.cg.stale, note: 'mass-weighted CoM of the listed bodies, mm from WCS origin 0,0,0; bodies are matched on restore by index + volume/bbox, name is a hint' } : undefined;
   save('balance-session.json', JSON.stringify({ app: 'rotating-assembly-balancer', version: VERSION, units: { length: 'mm', mass: 'g', density: 'kg/m3' },
-    axis: axisJson(axisNames(fr)), bodies: st.bodies.map(b => ({ name: b.name, on: b.on, rho: b.rho, src: b.src, removal: b.sign < 0, mass: bmass(b) })),
+    axis: axisJson(axisNames(fr)), bodies: st.bodies.map((b, i) => ({ ...bodyRef(b, i), on: b.on, rho: b.rho, src: b.src, removal: b.sign < 0, mass: bmass(b) })),
     tools: st.tools.map(t => ({ ...t, removal: t.sign < 0 })), residual: resJson(r1, axisNames(fr)), assemblyCG: assemblyCGJson, optimisation: st.last }, null, 1), 'application/json');
 }
 function loadSession(j) {
   if (!Array.isArray(j.tools)) return status('JSON has no tools[]');
   st.tools = j.tools.map(({ id, removal, ...t }) => makeTool(t.kind, t));
-  for (const b of j.bodies || []) { const m = st.bodies.find(x => x.name === b.name); if (m) Object.assign(m, { rho: b.rho, src: b.src, on: b.on }); }
+  const densMatch = matchBodies(j.bodies || [], st.bodies);
+  for (let si = 0; si < densMatch.map.length; si++) {
+    const ci = densMatch.map[si], b = j.bodies[si];
+    if (ci >= 0 && b) Object.assign(st.bodies[ci], { rho: b.rho, src: b.src, on: b.on });
+  }
+  if (densMatch.stale && (j.bodies || []).length) card('warn', `Session: some body densities were not applied (${esc(densMatch.notice) || 'could not match them uniquely'}).`);
   renderBodies(); renderTools(); renderAxis();
   const ax = j.axis || {}, a = makeAxis(ax.point || ax.origin || [0, 0, 0], ax.direction || ax.R?.slice(6, 9) || [0, 0, 1]); // 0.1.x sessions: origin + R
   const src = ax.source ?? ax.choice; if (!a.error) setAxis(a, PRESET[src] || (src?.[0] === 'P' && st.bodies[+src.slice(1)]) ? src : 'C'); else update();
   if (j.assemblyCG && Array.isArray(j.assemblyCG.c)) {
-    const names = j.assemblyCG.bodies || [];
-    st.sels = names.map(n => st.bodies.findIndex(b => b.name === n)).filter(i => i >= 0);
+    const saved = (j.assemblyCG.bodies || []).map(asSaved), cgMatch = matchBodies(saved, st.bodies);
+    st.sels = cgMatch.map.filter(i => i >= 0);
     st.sel = st.sels.at(-1) ?? -1; view.select(st.sels);
     document.querySelectorAll('#bodies tr[data-row]').forEach(r => r.classList.toggle('sel', st.sels.includes(+r.dataset.row)));
-    st.cg = { c: j.assemblyCG.c, m: j.assemblyCG.mass, n: j.assemblyCG.count ?? st.sels.length, names, indices: st.sels, key: cgKey(), stale: false };
-    st.cg.stale = st.cg.key !== cgKey() || st.sels.length !== names.length; renderCG();
+    const names = st.sels.map(i => st.bodies[i].name), notice = cgMatch.notice;
+    st.cg = { c: j.assemblyCG.c, m: j.assemblyCG.mass, n: j.assemblyCG.count ?? saved.length, names, indices: st.sels, key: cgKey(), stale: false, notice };
+    st.cg.stale = st.cg.key !== cgKey() || cgMatch.stale || densMatch.stale;
+    if (cgMatch.stale) card('warn', `Session: the saved assembly CG could not be matched completely (${esc(notice) || 'bodies changed or names were ambiguous'}). The result is marked stale.`);
+    renderCG();
   }
   status('Session loaded');
 }
