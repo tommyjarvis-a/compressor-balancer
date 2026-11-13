@@ -12,7 +12,9 @@ Plain ES modules, no framework, no build step. Files never leave the browser.
 1. Open the page (GitHub Pages, or any static server: `python3 -m http.server` in the repo root — opening
    `index.html` via `file://` does not work because browsers block module/WASM loads there).
 2. **Import**: drop one or more `.stp/.step` files (or click *browse*). Each solid body becomes a row.
-   - Density is taken from the STEP file when present (tag *STEP*), otherwise the *Default* preset
+   - Density is taken from the STEP file when a density record belongs to that body's product (tag *STEP*). A
+     file-wide value is used only if no record matches any body and the file has a single density (tag
+     *STEP (file)*). Otherwise the *Default* preset
      (steel 7850, aluminium 2700, cast iron 7200, copper 8900 kg/m³). Edit any body's ρ directly (tag *user*).
    - *Mass props*: **accurate (2-pass)** (default) tessellates twice and extrapolates (see accuracy below) and
      shows a per-body CoM uncertainty estimate; **fast** is a single pass.
@@ -20,7 +22,10 @@ Plain ES modules, no framework, no build step. Files never leave the browser.
    - Untick a body to exclude it (e.g. housings that do not rotate).
 3. **Spin axis**: world X/Y/Z through the given origin (default Z through 0,0,0), or any body's principal
    axis (the eigenvector whose principal moment is most distinct, i.e. the symmetry axis of a shaft/rotor,
-   through that body's CoM). Residuals are reported in that frame; for world Z, U<sub>x</sub>/U<sub>y</sub> are world X/Y.
+   through that body's CoM). Residuals are reported in that frame. For world Z they are labelled x/y (world X/Y).
+   For X, Y or a principal axis they are labelled **u/v**: components along the frame vectors u, v (⊥ the spin axis w,
+   u × v = w), whose world directions are shown under the table and written to the JSON/CSV exports
+   (e.g. axis X: u = −Z, v = +Y).
    - **Static U = m·e** (g·mm): first mass moment perpendicular to the axis. Goal ≈ (0, 0).
    - **Couple C** (g·mm²): products of inertia ∫x·z dm, ∫y·z dm (i.e. −I<sub>xz</sub>, −I<sub>yz</sub>) about the axial
      plane through the CoM. Goal ≈ (0, 0). With U = 0 the axis is a principal axis (dynamically balanced).
@@ -40,7 +45,11 @@ Plain ES modules, no framework, no build step. Files never leave the browser.
    For full static + couple balance use at least two tools in two axial planes (4 free values: e.g. a0 and h of each).
 6. **Export**: *Parameters JSON* (session: axis, bodies + densities, tools, residuals, last optimisation; drop it
    back in to reload the tools), *CSV* (tool, param, value + residuals), *Counterweights STEP* (AP214, one solid
-   per tool, mm; removal tools are named `REMOVE_…`).
+   per tool, mm). Removal tools are written as solids named `REMOVE_<name>` with the removed material's
+   density, and carry `"removal": true` (JSON) / a `removal` column (CSV).
+   - **Re-importing a `REMOVE_` solid** (e.g. the counterweights STEP dropped back in with the parts) counts it as
+     **material removal: negative mass** (tag *removal (−m)*, status message says so), so parts + exported tools
+     reproduce the tool-side residuals. Untick the row to ignore it.
 
 ## NX export notes
 
@@ -107,7 +116,7 @@ units, closed meshes), density read-back, tessellation convergence and extrapola
 - One small module per concern (`mass`, `imbalance`, `tools`, `nm`, `optimize`, `step-export`, `step-meta`, `view`,
   `app`) to keep future edits and reviews cheap.
 
-## Limitations (0.1.0-alpha)
+## Limitations (0.1.1-alpha)
 
 - STEP import runs on the main thread (large assemblies freeze the UI while meshing); no worker yet.
 - Density detection is heuristic (exporter-specific); parts without density use the default.

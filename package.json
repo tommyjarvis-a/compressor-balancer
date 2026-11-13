@@ -1,6 +1,6 @@
 {
   "name": "compressor-balancer",
-  "version": "0.1.0-alpha",
+  "version": "0.1.1-alpha",
   "private": true,
   "type": "module",
   "description": "Client-side STEP mass properties and two-plane balancing for e-compressor rotating assemblies",
