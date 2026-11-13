@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.4-alpha — 2026-11-13
+
+- **Fix (Medium, M2):** typing the spin-axis direction one field at a time no longer changes the axis.
+  Previously every change on the direction boxes normalised the (still incomplete) vector and wrote all three
+  fields back, so a unit vector entered as 0.40558, −0.40558, 0.81915 became (0.36047, −0.38899, 0.84779),
+  4.3° off, and residuals were wrong (|U| 274.6 instead of 108 on the QA tilted two-body case). The boxes now
+  keep the values as typed; the direction is normalised only internally (on change, blur or Enter, and before
+  computing). A zero or non-numeric entry shows an inline error and keeps the last valid axis. Presets, picks
+  and session restore still fill the boxes. A read-only unit-vector readout is shown next to the fields.
+  JSON/CSV axis output and session reload are unchanged.
+- Tests: field-by-field QA repro (raw values kept, |U| ≈ 108 vs the previous 274.6) (29 Node tests incl. the
+  optional OCP check); `tools/ui-smoke.cjs` covers the same path, the unit readout, and a non-numeric rejection.
+
 ## 0.1.3-alpha — 2026-11-13
 
 - **User-defined spin axis**: point + direction, typed (normalised, zero rejected) or picked in the 3-D view from a

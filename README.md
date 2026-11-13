@@ -36,7 +36,7 @@ Plain ES modules, no framework, no build step. Files never leave the browser.
 3. **Spin axis** = a **point + direction** (world mm). Set it by
    - a preset: world X/Y/Z through the point (default Z through 0,0,0), or a body's principal axis (the
      eigenvector whose principal moment is most distinct, i.e. the symmetry axis of a shaft/rotor, through its CoM);
-   - typing point and direction (normalised; a zero vector is rejected);
+   - typing point and direction (normalised internally; the boxes keep the values as typed; a zero or non-numeric vector is rejected and the last valid axis is kept);
    - picking in the 3-D view: **cylinder** (click a cylindrical face: its facet normals' null space gives the axis,
      a circle fit the radius and position; the axis point is the foot of the clicked point), **circle edge** (click a
      face next to a circular edge — hole, boss, planar circular face, end of a torus fillet: the face's boundary loop
@@ -129,12 +129,13 @@ triangle-budget prediction and fast fallback, import-pipeline accuracy. Fixtures
 
 Also: mesh closure check (T-junction / sliver / missing face), error-gated coarsening notes, residuals about a tilted
 axis vs the geometry rotated onto Z, cylinder and edge-loop fits on a tilted fixture (plus rejection cases),
-optimiser about a tilted axis.
+optimiser about a tilted axis, M2 field-by-field direction entry (boxes not rewritten, |U| ≈ 108).
 
 Browser responsiveness: `tools/browser-smoke.cjs` imports the fixtures (or given files) in Chromium and WebKit via
 Playwright and fails if any animation frame gap exceeds 1.5 s or the import takes longer than 60 s.
 UI: `HEADED=1 node tools/ui-smoke.cjs [url]` checks the triad (pixels, follows orbit, resize), selection
-(view ⇄ list, drag ≠ click, Esc, empty space), typed axis, picking (cylinder, circle edge, 2 points), the optimiser
+(view ⇄ list, drag ≠ click, Esc, empty space), typed axis (fields kept as typed, M2 field-by-field unit vector,
+zero / non-numeric rejection, unit readout), picking (cylinder, circle edge, 2 points), the optimiser
 about a tilted axis and JSON/CSV export + session reload, on `test/fixtures/tilted-rotor.stp`.
 Both accept `BROWSERS=chromium,webkit,msedge` (msedge = installed Microsoft Edge).
 
@@ -155,7 +156,7 @@ Both accept `BROWSERS=chromium,webkit,msedge` (msedge = installed Microsoft Edge
 - One small module per concern (`mass`, `imbalance`, `tools`, `nm`, `optimize`, `step-export`, `step-meta`, `fit`, `view`,
   `app`) to keep future edits and reviews cheap.
 
-## Limitations (0.1.3-alpha)
+## Limitations (0.1.4-alpha)
 
 - Very large assemblies are meshed coarser to fit the triangle budget (warning shown); a single OCCT call cannot be
   interrupted except by Cancel/timeout, which discards that file.

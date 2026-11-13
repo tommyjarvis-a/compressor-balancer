@@ -6,7 +6,7 @@ import { optimize } from './optimize.js';
 import { toStep } from './step-export.js';
 import { createView } from './view.js';
 
-const VERSION = '0.1.3-alpha', $ = s => document.querySelector(s);
+const VERSION = '0.1.4-alpha', $ = s => document.querySelector(s);
 // Without WebGL (blocked, no GPU and no software fallback) everything but the 3-D view still works.
 let view; try { view = createView($('#view')); } catch (e) {
   view = new Proxy({}, { get: () => () => null }); queueMicrotask(() => card('err', `<b>3-D view unavailable</b>: WebGL could not start (${esc(e.message)}). Mass properties, balancing and export still work; enable hardware acceleration in the browser settings for the view.`));
