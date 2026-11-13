@@ -5,7 +5,7 @@ import { optimize } from './optimize.js';
 import { toStep } from './step-export.js';
 import { createView } from './view.js';
 
-const VERSION = '0.1.1-alpha', $ = s => document.querySelector(s), view = createView($('#view'));
+const VERSION = '0.1.2-alpha', $ = s => document.querySelector(s), view = createView($('#view'));
 const st = { bodies: [], tools: [], last: null, undo: null };
 const fmt = (v, d = 3) => Math.abs(v) >= 1e5 || (v && Math.abs(v) < 1e-3) ? v.toExponential(d - 1) : (+v.toFixed(d)).toString();
 const status = s => $('#status').textContent = s;

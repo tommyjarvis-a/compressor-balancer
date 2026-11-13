@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.2-alpha — 2026-11-13
+
+- **Renamed** to **Rotating Assembly Balancer** (repo `rotating-assembly-balancer`; the old
+  `compressor-balancer` Pages URL no longer serves the app). Description is generic, e-compressors are one example.
+- **Fix (High): importing a STEP file froze the page and the tab crashed** on real-world parts (Edge/Chrome, also
+  reproduced in WebKit). Root cause: accurate mode meshed every file twice, synchronously on the main thread, with
+  fixed fine tessellation settings (bbox ratio 1e-4 / 2.5e-5, 0.02 / 0.01 rad). Filleted parts produced 1.5M–12M
+  triangles and needed 100–600+ s and up to 2.6 GB (a 135 KB, 40-face shaft: 1.49M triangles / 106 s for pass 1).
+  The 0.1.x fixtures have ≤ 20 simple faces, so tests and headless smoke runs never hit it.
+  - Import, tessellation, density and mass properties now run in a module Web Worker (one per file, terminated
+    afterwards to free the WASM heap; WASM compiled once). Progress, Cancel, 180 s timeout with an error card.
+  - Tessellation budget: deflection relative to the bbox diagonal (clamped), triangle prediction from a probe pass,
+    1.2M total / 600k per body; coarsens or falls back to fast mode with a warning card.
+  - Faster closed-mesh check (numeric edge keys).
+- Tests: clamp/budget/prediction, fast fallback, import-pipeline accuracy (21 Node tests + optional OCP);
+  `tools/browser-smoke.cjs` Playwright responsiveness check for Chromium and WebKit.
+
 ## 0.1.1-alpha — 2026-11-13
 
 Fixes from the 0.1.0-alpha release gate (QA GATE-69afba1).
