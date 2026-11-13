@@ -1,5 +1,5 @@
 import { KGM3, add, scale, derive, eig3, zero, assemblyCG } from './mass.js';
-import { uniqueNames, bodyRef, asSaved, matchBodies } from './bodies.js';
+import { uniqueNames, bodyRef, asSaved, matchBodies, restoreCG, holdStale } from './bodies.js';
 import { frame, imbalance, twoPlane, axisNames } from './imbalance.js';
 import { makeTool, toolMoments, valid, eulerZYX, PARAMS, COMMON_PARAMS } from './tools.js';
 import { fitCylinder, fitLoop, faceOf, makeAxis, canon } from './fit.js';
@@ -7,7 +7,7 @@ import { optimize } from './optimize.js';
 import { toStep } from './step-export.js';
 import { createView } from './view.js';
 
-const VERSION = '0.1.6-alpha', $ = s => document.querySelector(s);
+const VERSION = '0.1.7-alpha', $ = s => document.querySelector(s);
 // Without WebGL (blocked, no GPU and no software fallback) everything but the 3-D view still works.
 let view; try { view = createView($('#view')); } catch (e) {
   view = new Proxy({}, { get: () => () => null }); queueMicrotask(() => card('err', `<b>3-D view unavailable</b>: WebGL could not start (${esc(e.message)}). Mass properties, balancing and export still work; enable hardware acceleration in the browser settings for the view.`));
@@ -258,19 +258,25 @@ function runOpt() {
 // ---------- assembly CG (mass-weighted CoM of the current list/view selection) ----------
 // Stale handling: the result and marker stay visible after a calculation; if the selection, a density,
 // or the body set then changes, the readout and marker are marked stale until Calculate CG is clicked again.
+// Loading a session never clears stale (H2); only a successful Calculate CG does. A restore that is not
+// an exact full match drops the saved numbers so a CG from another file cannot appear as current.
 const cgKey = () => st.sels.map(i => { const b = st.bodies[i]; return b ? `${i}:${b.name}:${b.rho}:${b.sign}:${b.vol.m}` : i + ':?'; }).join(',') + '#' + st.bodies.length;
 function touchCG() {
   if (!st.cg || st.cg.error) return;
-  const stale = st.cg.key !== cgKey();
-  if (stale !== !!st.cg.stale) { st.cg.stale = stale; renderCG(); }
+  const next = holdStale(st.cg, cgKey());
+  if (next.stale !== !!st.cg.stale) { st.cg = next; renderCG(); }
 }
 function calcCG() {
   const r = assemblyCG(st.bodies, st.sels);
-  st.cg = r.error ? r : { ...r, key: cgKey(), stale: false };
+  st.cg = r.error ? r : { ...r, key: cgKey(), stale: false, dropped: false, notice: '' };
   renderCG();
 }
 function renderCG() {
   const el = $('#cgout'), r = st.cg;
+  if (r?.dropped) {
+    el.className = 'hint stale'; el.innerHTML = `<span class="tag">stale</span> Saved assembly CG was not restored${r.notice ? ' (' + esc(r.notice) + ')' : ''}. Click Calculate CG to compute it for the current selection.`;
+    view.setAssemblyCG(null); return;
+  }
   if (!r || r.error === 'none') {
     el.className = 'hint'; el.textContent = r?.error === 'none' ? 'No bodies selected — select one or more in the list or the 3-D view, then Calculate CG.' : 'Select one or more bodies (Ctrl-click or Shift-click to add), then Calculate CG.';
     view.setAssemblyCG(null); return;
@@ -296,10 +302,10 @@ const resJson = (r, an) => ({ components: an.n, basis: { u: an.u, v: an.v, w: an
 function exportAs(kind) {
   const { fr, r1 } = update();
   if (kind === 'step') return st.tools.some(t => valid(t) && t.sign > 0) || st.tools.some(valid) ? save('counterweights.stp', toStep(st.tools), 'application/step') : status('No valid tools to export');
-  const cgRows = st.cg && !st.cg.error ? [['assembly CG', 'X mm', st.cg.c[0]], ['assembly CG', 'Y mm', st.cg.c[1]], ['assembly CG', 'Z mm', st.cg.c[2]], ['assembly CG', 'mass g', st.cg.m], ['assembly CG', 'bodies', st.cg.names.join(';')], ['assembly CG', 'stale', !!st.cg.stale]] : [];
+  const cgRows = st.cg && !st.cg.error && !st.cg.dropped ? [['assembly CG', 'X mm', st.cg.c[0]], ['assembly CG', 'Y mm', st.cg.c[1]], ['assembly CG', 'Z mm', st.cg.c[2]], ['assembly CG', 'mass g', st.cg.m], ['assembly CG', 'bodies', st.cg.names.join(';')], ['assembly CG', 'stale', !!st.cg.stale]] : [];
   if (kind === 'csv') return save('counterweights.csv', 'tool,kind,role,sign,removal,param,value\n' + st.tools.flatMap(t => [...PARAMS[t.kind], ...COMMON_PARAMS].map(k => [t.name, t.kind, t.role, t.sign, t.sign < 0, k, t[k]].join(','))).join('\n') +
     `\n\n${resRows(r1, axisNames(fr)).map(r => r.join(',')).join('\n')}${cgRows.length ? '\n' + cgRows.map(r => r.join(',')).join('\n') : ''}\n`, 'text/csv');
-  const assemblyCGJson = st.cg && !st.cg.error ? { c: st.cg.c, mass: st.cg.m, count: st.cg.n, bodies: (st.cg.indices || st.sels).map(i => bodyRef(st.bodies[i], i)), stale: !!st.cg.stale, note: 'mass-weighted CoM of the listed bodies, mm from WCS origin 0,0,0; bodies are matched on restore by index + volume/bbox, name is a hint' } : undefined;
+  const assemblyCGJson = st.cg && !st.cg.error && !st.cg.dropped ? { c: st.cg.c, mass: st.cg.m, count: st.cg.n, bodies: (st.cg.indices || st.sels).map(i => bodyRef(st.bodies[i], i)), stale: !!st.cg.stale, note: 'mass-weighted CoM of the listed bodies, mm from WCS origin 0,0,0; bodies are matched on restore by sign, unique base name, and volume/bbox' } : undefined;
   save('balance-session.json', JSON.stringify({ app: 'rotating-assembly-balancer', version: VERSION, units: { length: 'mm', mass: 'g', density: 'kg/m3' },
     axis: axisJson(axisNames(fr)), bodies: st.bodies.map((b, i) => ({ ...bodyRef(b, i), on: b.on, rho: b.rho, src: b.src, removal: b.sign < 0, mass: bmass(b) })),
     tools: st.tools.map(t => ({ ...t, removal: t.sign < 0 })), residual: resJson(r1, axisNames(fr)), assemblyCG: assemblyCGJson, optimisation: st.last }, null, 1), 'application/json');
@@ -318,13 +324,15 @@ function loadSession(j) {
   const src = ax.source ?? ax.choice; if (!a.error) setAxis(a, PRESET[src] || (src?.[0] === 'P' && st.bodies[+src.slice(1)]) ? src : 'C'); else update();
   if (j.assemblyCG && Array.isArray(j.assemblyCG.c)) {
     const saved = (j.assemblyCG.bodies || []).map(asSaved), cgMatch = matchBodies(saved, st.bodies);
-    st.sels = cgMatch.map.filter(i => i >= 0);
-    st.sel = st.sels.at(-1) ?? -1; view.select(st.sels);
+    const rest = restoreCG(cgMatch, j.assemblyCG, { saved: (j.bodies || []).length || undefined, current: st.bodies.length });
+    st.sels = rest.sels; st.sel = st.sels.at(-1) ?? -1; view.select(st.sels);
     document.querySelectorAll('#bodies tr[data-row]').forEach(r => r.classList.toggle('sel', st.sels.includes(+r.dataset.row)));
-    const names = st.sels.map(i => st.bodies[i].name), notice = cgMatch.notice;
-    st.cg = { c: j.assemblyCG.c, m: j.assemblyCG.mass, n: j.assemblyCG.count ?? saved.length, names, indices: st.sels, key: cgKey(), stale: false, notice };
-    st.cg.stale = st.cg.key !== cgKey() || cgMatch.stale || densMatch.stale;
-    if (cgMatch.stale) card('warn', `Session: the saved assembly CG could not be matched completely (${esc(notice) || 'bodies changed or names were ambiguous'}). The result is marked stale.`);
+    const names = st.sels.map(i => st.bodies[i].name);
+    if (rest.keep) st.cg = { c: rest.c, m: rest.m, n: rest.sels.length, names, indices: st.sels, key: cgKey(), stale: false, dropped: false, notice: '' };
+    else {
+      st.cg = { dropped: true, stale: true, notice: rest.notice, key: cgKey(), names, indices: st.sels };
+      card('warn', `Session: the saved assembly CG was not restored (${esc(rest.notice) || 'bodies changed or did not match uniquely'}). Click Calculate CG for the current selection.`);
+    }
     renderCG();
   }
   status('Session loaded');
