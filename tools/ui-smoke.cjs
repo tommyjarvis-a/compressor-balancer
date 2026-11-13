@@ -161,8 +161,20 @@ const TILT = { rx: 25, ry: -10, rz: 15 }, O = [5, -3, 8];
       const U = Math.hypot(...s.last.after.U), C = Math.hypot(...s.last.after.C), U0 = Math.hypot(...s.last.before.U);
       if (process.env.SHOT) await p.screenshot({ path: process.env.SHOT + '-axis.png' });
       check('optimiser balances about the tilted axis', U < 0.05 && C < 5 && U0 > 100, `|U| ${U0.toFixed(1)} → ${U.toExponential(2)} g·mm, |C| → ${C.toExponential(2)} g·mm²`);
-      // --- export + session reload
+      // Recalculate on shaft+rotor immediately before export so the session is current.
+      // Esc after the earlier calc, and later picks, would otherwise leave the CG stale (H3).
+      const namesNow = await p.evaluate(() => rab.st.bodies.map(b => b.name));
+      const iS = namesNow.indexOf('shaft'), iR = namesNow.indexOf('rotor');
+      await p.click(`#bodies tr[data-row="${iS}"] td:nth-child(2)`);
+      await p.click(`#bodies tr[data-row="${iR}"] td:nth-child(2)`, { modifiers: ['ControlOrMeta'] });
+      await p.click('#calcg');
+      // --- export + session reload (current, stale-after-density, legacy, other-file)
       const dl = async k => { const [d] = await Promise.all([p.waitForEvent('download'), p.click(`[data-exp="${k}"]`)]); return fs.readFileSync(await d.path(), 'utf8'); };
+      const readCG = () => p.evaluate(() => ({ c: rab.st.cg && rab.st.cg.c, mass: rab.st.cg && rab.st.cg.m, stale: document.querySelector('#cgout')?.classList.contains('stale'), text: document.querySelector('#cgout')?.textContent, dropped: !!(rab.st.cg && rab.st.cg.dropped), notice: (rab.st.cg && rab.st.cg.notice) || '', has: rab.view.hasAssemblyCG(), mark: !!document.querySelector('#cgmark') && !document.querySelector('#cgmark').hidden, sels: rab.st.sels.slice(), rho: Object.fromEntries(rab.st.bodies.map(b => [b.name, b.rho])) }));
+      const loadFileThenSession = async (step, sessionFile) => {
+        await p.reload(); await p.setInputFiles('#file', step); await p.waitForFunction(() => / bodies ·/.test(document.querySelector('#status').textContent), null, { timeout: 60000 });
+        await p.setInputFiles('#file', sessionFile); await p.waitForFunction(() => /Session loaded/.test(document.querySelector('#status').textContent), null, { timeout: 10000 });
+      };
       const j = JSON.parse(await dl('json')), csv = await dl('csv'), ax = j.axis;
       check('JSON axis point/direction/basis', ax.point.join() === s.axis.p.join() && ax.direction.join() === s.axis.d.join() && ax.basis.w.every((v, k) => Math.abs(v - s.axis.d[k]) < 1e-9) && Math.abs(dot(ax.basis.u, ax.basis.w)) < 1e-12, JSON.stringify(ax.basis.u));
       check('CSV axis + basis rows', /axis,direction \(world\),/.test(csv) && /basis,w \(world\),/.test(csv) && /basis,u \(world\),/.test(csv));
@@ -170,13 +182,40 @@ const TILT = { rx: 25, ry: -10, rz: 15 }, O = [5, -3, 8];
       const cgBodies = (cgJ && cgJ.bodies) || [];
       const refs = cgBodies.every(b => b && Number.isFinite(b.index) && Number.isFinite(b.vol) && Array.isArray(b.bbox) && b.bbox.length === 6);
       check('JSON includes assembly CG (c, mass, body fingerprints)', !!(cgJ && Array.isArray(cgJ.c) && cgJ.c.length === 3 && typeof cgJ.mass === 'number' && cgBodies.length >= 1 && refs), JSON.stringify(cgJ));
-      check('CSV includes assembly CG rows', /assembly CG,X mm,/.test(csv) && /assembly CG,Y mm,/.test(csv) && /assembly CG,Z mm,/.test(csv) && /assembly CG,mass g,/.test(csv));
-      const resid0 = await p.textContent('#resid'), jf = path.join(require('os').tmpdir(), 'rab-session.json'); fs.writeFileSync(jf, JSON.stringify(j));
-      await p.reload(); await p.setInputFiles('#file', FIX); await p.waitForFunction(() => / bodies ·/.test(document.querySelector('#status').textContent), null, { timeout: 60000 });
-      await p.setInputFiles('#file', jf); await p.waitForFunction(() => /Session loaded/.test(document.querySelector('#status').textContent), null, { timeout: 10000 }); s = await st();
+      check('export after Calculate CG writes stale false', !!(cgJ && cgJ.stale === false), JSON.stringify(cgJ && { stale: cgJ.stale }));
+      check('CSV includes assembly CG rows', /assembly CG,X mm,/.test(csv) && /assembly CG,Y mm,/.test(csv) && /assembly CG,Z mm,/.test(csv) && /assembly CG,mass g,/.test(csv) && /assembly CG,stale,false/.test(csv));
+      const resid0 = await p.textContent('#resid'), tmp = require('os').tmpdir(), jf = path.join(tmp, 'rab-session.json'); fs.writeFileSync(jf, JSON.stringify(j));
+      await loadFileThenSession(FIX, jf); s = await st();
       check('session reload restores axis + residuals', s.axis.p.join() === ax.point.join() && s.axis.d.join() === ax.direction.join() && (await p.textContent('#resid')) === resid0);
-      const cg2 = await p.evaluate(() => ({ c: rab.st.cg && rab.st.cg.c, mass: rab.st.cg && rab.st.cg.m, stale: document.querySelector('#cgout')?.classList.contains('stale'), text: document.querySelector('#cgout')?.textContent }));
-      check('session reload restores assembly CG', !!(cg2.c && cgJ && cg2.c.every((v, i) => v === cgJ.c[i]) && cg2.mass === cgJ.mass && /Assembly CG/.test(cg2.text || '') && !cg2.stale), JSON.stringify(cg2));
+      const cg2 = await readCG();
+      check('session reload restores a current assembly CG', !!(cg2.c && cgJ && cg2.c.every((v, i) => v === cgJ.c[i]) && cg2.mass === cgJ.mass && /Assembly CG/.test(cg2.text || '') && !cg2.stale && !cg2.dropped && cg2.has), JSON.stringify(cg2));
+      const j2 = JSON.parse(await dl('json'));
+      check('re-export after current restore keeps stale false', !!(j2.assemblyCG && j2.assemblyCG.stale === false && j2.assemblyCG.mass === cgJ.mass), JSON.stringify(j2.assemblyCG && { stale: j2.assemblyCG.stale, mass: j2.assemblyCG.mass }));
+      // H3: density edit, export, same-file restore stays stale with numbers, density and selection kept
+      await p.fill(`#bodies input[data-rho="${iS}"]`, '2700');
+      await p.dispatchEvent(`#bodies input[data-rho="${iS}"]`, 'input');
+      check('density edit before export marks the CG stale', await p.evaluate(() => document.querySelector('#cgout').classList.contains('stale')));
+      const jStale = JSON.parse(await dl('json')), csvStale = await dl('csv');
+      const shaftRec = (jStale.bodies || []).find(b => b.name === 'shaft');
+      check('export after density edit writes stale true', !!(jStale.assemblyCG && jStale.assemblyCG.stale === true && shaftRec && shaftRec.rho === 2700 && jStale.assemblyCG.mass === cgJ.mass), JSON.stringify(jStale.assemblyCG));
+      check('CSV after density edit writes stale true', /assembly CG,stale,true/.test(csvStale));
+      const jfS = path.join(tmp, 'rab-session-stale.json'); fs.writeFileSync(jfS, JSON.stringify(jStale));
+      await loadFileThenSession(FIX, jfS);
+      const cgS = await readCG();
+      check('H3 same-file stale restore keeps numbers, stale flag, density, selection and marker', !!(cgS.stale && !cgS.dropped && cgS.c && jStale.assemblyCG.c.every((v, i) => v === cgS.c[i]) && cgS.mass === jStale.assemblyCG.mass && cgS.rho.shaft === 2700 && cgS.has && /stale/.test(cgS.text || '') && cgS.sels.includes(iS) && cgS.sels.includes(iR)), JSON.stringify(cgS));
+      const jS2 = JSON.parse(await dl('json'));
+      check('re-export after stale restore keeps stale true', !!(jS2.assemblyCG && jS2.assemblyCG.stale === true), JSON.stringify(jS2.assemblyCG && { stale: jS2.assemblyCG.stale }));
+      // legacy session (no stale flag) on the same file: numbers kept, treated as stale
+      const jLeg = JSON.parse(JSON.stringify(j)); delete jLeg.assemblyCG.stale;
+      const jfL = path.join(tmp, 'rab-session-legacy.json'); fs.writeFileSync(jfL, JSON.stringify(jLeg));
+      await loadFileThenSession(FIX, jfL);
+      const cgL = await readCG();
+      check('legacy session with no stale flag restores as stale', !!(cgL.stale && !cgL.dropped && cgL.c && cgJ.c.every((v, i) => v === cgL.c[i]) && /did not record|stale/.test(cgL.text + ' ' + cgL.notice) && cgL.has), JSON.stringify(cgL));
+      // other file: tilted-rotor current session onto cg-assembly.stp
+      const FIX2 = path.join(__dirname, '../test/fixtures/cg-assembly.stp');
+      await loadFileThenSession(FIX2, jf);
+      const cgO = await readCG();
+      check('other-file restore drops the CG (stale, no numbers, no marker, notice)', !!(cgO.dropped && cgO.stale && !cgO.c && !cgO.has && /not restored/.test(cgO.text || '')), JSON.stringify(cgO));
     } catch (e) { check('run', false, e.message); }
     check('no page errors', !errs.length, errs.join(' | '));
     console.log(`${name}:\n  ` + res.join('\n  '));

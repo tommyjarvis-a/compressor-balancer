@@ -169,7 +169,7 @@ test('H2: a cross-file session leaves the CG dropped and stale; only calc-style 
   assert.equal(rest.keep, false);
   assert.equal(rest.stale, true);
   assert.equal(rest.dropped, true);
-  const kept = restoreCG({ map: [0, 1], stale: false, notice: '' }, { c: [1, 2, 3], mass: 50 });
+  const kept = restoreCG({ map: [0, 1], stale: false, notice: '' }, { c: [1, 2, 3], mass: 50, stale: false });
   assert.equal(kept.keep, true);
   assert.equal(kept.stale, false);
   assert.deepEqual(kept.c, [1, 2, 3]);
