@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { derive, add, zero, scale, eig3 } from '../src/mass.js';
 import { frame, imbalance, twoPlane } from '../src/imbalance.js';
 import { makeTool, toolMoments, region, rotMat } from '../src/tools.js';
+import { optimize } from '../src/optimize.js';
+import { FIX } from './fixtures.mjs';
 
 const rel = (a, b) => Math.abs(a - b) / Math.max(Math.abs(b), 1e-12);
 const close = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg}: ${a} vs ${b} (tol ${tol})`);
@@ -31,3 +33,26 @@ test('static and couple imbalance of point-like masses', () => {
   // Same assembly about the X axis: frame axis is now x, couple from ∫x'z' with x'⊥.
   const rx = imbalance(pair, frame([0, 0, 0], [1, 0, 0])); close(rx.Umag, 0, 1e-9, 'U about X');
 });
+
+test('optimiser balances a synthetic unbalanced rotor (static + couple), deterministically', () => {
+  const base = FIX['rotor-unbalanced'].reduce((a, t) => add(a, toolMoments(t)), zero()), fr = frame([0, 0, 0], [0, 0, 1]);
+  const r0 = imbalance(base, fr);
+  assert.ok(r0.Umag > 50 && r0.Cmag > 1000, 'fixture is unbalanced');
+  const tools = [makeTool('sector', { name: 'cwA', ri: 31, ro: 40, a0: 0, sweep: 60, h: 3, z: 56 }), makeTool('sector', { name: 'cwB', ri: 31, ro: 40, a0: 0, sweep: 60, h: 3, z: -10 })];
+  const free = tools.flatMap(t => [{ id: t.id, key: 'a0', lo: -180, hi: 180 }, { id: t.id, key: 'h', lo: 0.5, hi: 20 }]);
+  const t0 = performance.now(), res = optimize(base, tools, free, fr, { L: 66 }), ms = performance.now() - t0;
+  const res2 = optimize(base, tools, free, fr, { L: 66 });
+  console.log(`  rotor: |U| ${r0.Umag.toFixed(1)} → ${res.after.r.Umag.toExponential(2)} g·mm, |C| ${r0.Cmag.toFixed(0)} → ${res.after.r.Cmag.toExponential(2)} g·mm², added ${res.after.dm.toFixed(2)} g, ${res.evals} evals, ${ms.toFixed(0)} ms`);
+  assert.ok(res.after.r.Umag < 1e-2, 'static residual < 0.01 g·mm'); assert.ok(res.after.r.Cmag < 1, 'couple residual < 1 g·mm²');
+  assert.deepEqual(res.params.map(p => p.value), res2.params.map(p => p.value), 'deterministic');
+  assert.ok(ms < 2000, 'interactive');
+  res.params.forEach(p => assert.ok(p.value >= p.lo && p.value <= p.hi, 'within bounds'));
+});
+
+test('optimiser respects bounds when exact balance is infeasible', () => {
+  const base = toolMoments(makeTool('cylinder', { r: 1, h: 10, x: 30, rho: 7850 })), fr = frame([0, 0, 0], [0, 0, 1]);
+  const t = makeTool('sector', { ri: 10, ro: 20, a0: 0, sweep: 30, h: 1 });
+  const res = optimize(base, [t], [{ id: t.id, key: 'h', lo: 0.1, hi: 0.2 }, { id: t.id, key: 'a0', lo: -180, hi: 180 }], fr);
+  const h = res.params[0].value; assert.ok(h <= 0.2 && h >= 0.1); assert.ok(res.after.r.Umag < res.before.r.Umag);
+});
+

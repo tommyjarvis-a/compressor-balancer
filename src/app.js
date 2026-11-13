@@ -1,11 +1,12 @@
 import { KGM3, add, scale, meshMoments, derive, eig3, openEdges, zero, richardson, MESH } from './mass.js';
 import { frame, imbalance, twoPlane } from './imbalance.js';
 import { makeTool, toolMoments, valid, PARAMS, COMMON_PARAMS } from './tools.js';
+import { optimize } from './optimize.js';
 import { readDensities } from './step-meta.js';
 import { createView } from './view.js';
 
 const VERSION = '0.1.0-alpha', $ = s => document.querySelector(s), view = createView($('#view'));
-const st = { bodies: [], tools: [] };
+const st = { bodies: [], tools: [], last: null, undo: null };
 const fmt = (v, d = 3) => Math.abs(v) >= 1e5 || (v && Math.abs(v) < 1e-3) ? v.toExponential(d - 1) : (+v.toFixed(d)).toString();
 const status = s => $('#status').textContent = s;
 
@@ -98,12 +99,13 @@ function renderTools() {
       <select data-k="role"><option ${t.role === 'counterweight' ? 'selected' : ''}>counterweight</option><option ${t.role === 'swinglink' ? 'selected' : ''}>swinglink</option></select>
       <select data-k="sign"><option value="1" ${t.sign > 0 ? 'selected' : ''}>add</option><option value="-1" ${t.sign < 0 ? 'selected' : ''}>remove</option></select>
       <button data-del="${i}" title="Remove tool">✕</button>${valid(t) ? '' : ' <span class="bad">invalid</span>'}</div>
-    <div class="grid">${[...PARAMS[t.kind], ...COMMON_PARAMS].map(k => `<label><span>${LABEL[k]}</span><input type="number" step="any" data-k="${k}" value="${+(+t[k]).toPrecision(8)}"></label>`).join('')}</div>
+    <div class="grid">${[...PARAMS[t.kind], ...COMMON_PARAMS].map(k => `<label class="${t.free?.[k] ? 'f' : ''}"><span>${LABEL[k]}</span><input type="number" step="any" data-k="${k}" value="${+(+t[k]).toPrecision(8)}">
+      <input type="checkbox" title="free for optimiser" data-free="${k}" ${t.free?.[k] ? 'checked' : ''}>${t.free?.[k] ? `<span class="free"><input type="number" step="any" data-lo="${k}" value="${t.free[k][0]}"><input type="number" step="any" data-hi="${k}" value="${t.free[k][1]}"></span>` : ''}</label>`).join('')}</div>
     ${t.kind === 'prism' ? `<textarea data-k="pts" title="x,y; x,y; … (mm, local)">${t.pts.map(p => p.join(',')).join('; ')}</textarea>` : ''}
     <div class="src">mass ${valid(t) ? fmt(toolMoments(t).m) : '—'} g</div></div>`).join('');
 }
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
-
+const defBounds = (k, v) => /^(a0|rx|ry|rz)$/.test(k) ? [-180, 180] : k === 'sweep' ? [5, 360] : [Math.max(/^(x|y|z)$/.test(k) ? -1e9 : 0, +(v - Math.max(Math.abs(v), 10)).toFixed(3)), +(v + Math.max(Math.abs(v), 10)).toFixed(3)];
 
 $('#panel').addEventListener('input', e => {
   const el = e.target, card = el.closest('.tool');
@@ -112,6 +114,7 @@ $('#panel').addEventListener('input', e => {
   const t = st.tools[+card.dataset.i], k = el.dataset.k;
   if (k === 'pts') { const p = el.value.split(';').map(s => s.split(',').map(Number)).filter(p => p.length === 2 && p.every(isFinite)); if (p.length >= 3) t.pts = p; }
   else if (k === 'name' || k === 'role') t[k] = el.value; else if (k) t[k] = +el.value;
+  if (el.dataset.lo) t.free[el.dataset.lo][0] = +el.value; if (el.dataset.hi) t.free[el.dataset.hi][1] = +el.value;
   card.querySelector('.src').textContent = `mass ${valid(t) ? fmt(toolMoments(t).m) : '—'} g`; update();
 });
 $('#panel').addEventListener('change', e => {
@@ -119,19 +122,38 @@ $('#panel').addEventListener('change', e => {
   if (el.dataset.on) { const i = +el.dataset.on; st.bodies[i].on = el.checked; view.showBody(i, el.checked); return update(); }
   if (el.id === 'axis' || /^o[xyz]$/.test(el.id)) return update();
   if (el.id === 'defrho') { st.bodies.forEach(b => { if (b.src === 'default') b.rho = +el.value; }); renderBodies(); return update(); }
+  if (card && el.dataset.free) { const t = st.tools[+card.dataset.i], k = el.dataset.free; t.free ??= {}; if (el.checked) t.free[k] = defBounds(k, t[k]); else delete t.free[k]; renderTools(); }
   if (card && (el.dataset.k === 'sign' || el.dataset.k === 'role')) { renderTools(); update(); }
 });
 $('#panel').addEventListener('click', e => {
   const el = e.target;
   if (el.dataset.add) {
     const { sp } = update(), z = st.tools.length % 2 ? sp[0] - 5 : sp[1], t = makeTool(el.dataset.add, { z });
+    t.free = el.dataset.add === 'sector' ? { a0: [-180, 180], sweep: [5, 180], h: [0.2, 20] } : el.dataset.add === 'cylinder' ? { x: [-60, 60], y: [-60, 60] } : { rz: [-180, 180], h: [0.2, 20] };
     if (el.dataset.add === 'cylinder') Object.assign(t, { x: 30, r: 5 });
     st.tools.push(t); renderTools(); update(); if (!st.bodies.length) view.fit();
   }
   if (el.dataset.del) { st.tools.splice(+el.dataset.del, 1); renderTools(); update(); }
+  if (el.id === 'undo' && st.undo) { st.tools = st.undo; st.undo = null; el.disabled = true; renderTools(); update(); $('#optout').textContent = 'Reverted.'; }
+  if (el.id === 'run') runOpt();
 });
 
-
+function runOpt() {
+  const { fr, base, sp } = update();
+  const free = st.tools.flatMap(t => Object.entries(t.free || {}).map(([key, [lo, hi]]) => ({ id: t.id, key, lo, hi, name: t.name, from: t[key] })));
+  if (!free.length) return $('#optout').innerHTML = '<p class="bad">Free at least one tool value (tick its ☐).</p>';
+  if (free.some(p => !(p.hi > p.lo))) return $('#optout').innerHTML = '<p class="bad">Each free value needs hi &gt; lo.</p>';
+  const L = +$('#lref').value || Math.max(sp[1] - sp[0], 1), t0 = performance.now();
+  const res = optimize(base, st.tools, free, fr, { L, w: +$('#wc').value, lam: +$('#lam').value });
+  if (!res.after.r) return $('#optout').innerHTML = '<p class="bad">No valid solution inside the bounds.</p>';
+  st.undo = st.tools; st.tools = res.tools; $('#undo').disabled = false;
+  const dm = res.after.dm, b = res.before.r, a = res.after.r;
+  st.last = { L, w: +$('#wc').value, lam: +$('#lam').value, evals: res.evals, ms: performance.now() - t0, params: res.params.map(({ name, key, lo, hi, from, value }) => ({ tool: name, param: key, lo, hi, from, value })),
+    before: b && { U: b.U, C: b.C }, after: { U: a.U, C: a.C }, addedMass: dm };
+  $('#optout').innerHTML = `<table><tr><th>Tool.param</th><th>from</th><th>→ suggested</th></tr>${st.last.params.map(p => `<tr><td>${esc(p.tool)}.${p.param}</td><td>${fmt(p.from)}</td><td><b>${fmt(p.value, 4)}</b></td></tr>`).join('')}</table>
+    <p>|U| ${b ? fmt(b.Umag) : '—'} → <b>${fmt(a.Umag)}</b> g·mm · |C| ${b ? fmt(b.Cmag) : '—'} → <b>${fmt(a.Cmag)}</b> g·mm² · tools mass ${fmt(dm)} g · ${res.evals} evals, ${fmt(st.last.ms, 0)} ms</p>`;
+  renderTools(); update();
+}
 
 const drop = $('#drop');
 ['dragover', 'dragenter'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));

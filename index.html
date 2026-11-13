@@ -30,6 +30,15 @@
     <div class="row"><button data-add="sector">+ Sector</button><button data-add="cylinder">+ Cylinder</button><button data-add="prism">+ Profile</button></div>
     <div id="tools"></div>
   </section>
+  <section>
+    <h2>4 · Optimise</h2>
+    <p class="hint">Tick ☐ next to a tool value to free it, then set its bounds.</p>
+    <div class="row"><label title="Weight on couple term">Couple weight <input id="wc" type="number" value="1" step="any"></label>
+      <label title="Reference length converting g·mm² to g·mm (blank = axial span)">L mm <input id="lref" type="number" placeholder="auto" step="any"></label>
+      <label title="Penalty on added mass²">Mass λ <input id="lam" type="number" value="0" step="any"></label></div>
+    <div class="row"><button id="run" class="primary">Run optimiser</button><button id="undo" disabled>Undo</button></div>
+    <div id="optout"></div>
+  </section>
   <footer>Client-side only — files never leave this browser. <a href="THIRD_PARTY.md">Licenses</a> · <a href="https://github.com/kovacsv/occt-import-js">occt-import-js source</a></footer>
 </aside>
 <div id="view"></div>
