@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.3-alpha — 2026-11-13
+
+- **User-defined spin axis**: point + direction, typed (normalised, zero rejected) or picked in the 3-D view from a
+  cylindrical face (least-squares cylinder: normals' null space + circle fit), a circular edge loop (plane + circle
+  fit) or two points; poor fits are rejected with a message. Presets (X/Y/Z, principal axis) set the same axis
+  object. Residuals, two-plane readout and optimiser use it; u/v/w is derived deterministically; axial positions are
+  measured along w from the axis point; new tools are placed on the axis. Drawn as line + arrow through the point.
+  Point, direction, source and u/v/w are in the JSON/CSV export and the session (0.1.x sessions still load).
+  Principal-axis directions now use the fixed sign rule (largest component positive), so u/v may flip vs 0.1.2.
+- **WCS triad** (X/Y/Z red/green/blue, labelled) in a lower-left inset that follows the camera; crisp on HiDPI and
+  after resize / zoom.
+- **Body selection** synced between the list and the 3-D view (raycast), highlight, scroll-into-view, Esc / empty
+  click deselects; orbit drags (> 5 px) are not clicks.
+- **L5**: "mesh coarsened" / fast-fallback is a warning only if the estimated error matters (relative volume
+  > 1e-4 or CoM > 1 µm for any body), otherwise a quiet info card. Fast mode gets a rough probe-based uncertainty.
+- **L6**: ⚠ "unreliable" only when the mesh does not close — volume closure `|ΣA|·(D/2)/(3|V|)` > 1e-4 — or > 5 % of
+  edges are open/non-manifold; isolated bad edges get a quiet ⓘ.
+- Without WebGL the app keeps working (error card; no 3-D view) instead of failing to start.
+- Tests: tilted-axis invariance, cylinder/loop fits and rejections, optimiser about a tilted axis, closure check,
+  error-gated notes (28 Node tests incl. the optional OCP check); `tools/ui-smoke.cjs` headed UI smoke; both browser scripts
+  can run installed Microsoft Edge (`BROWSERS=msedge`). Synthetic fixture `tilted-rotor.stp`.
+
 ## 0.1.2-alpha — 2026-11-13
 
 - **Renamed** to **Rotating Assembly Balancer** (repo `rotating-assembly-balancer`; the old

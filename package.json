@@ -1,6 +1,6 @@
 {
   "name": "rotating-assembly-balancer",
-  "version": "0.1.2-alpha",
+  "version": "0.1.3-alpha",
   "private": true,
   "type": "module",
   "description": "Client-side STEP mass properties and two-plane balancing for rotating assemblies (e.g. e-compressor rotors)",
